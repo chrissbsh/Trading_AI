@@ -9,6 +9,7 @@ from sklearn.metrics import (
 )
 from tensorflow.keras.models import Sequential, save_model # type: ignore
 from tensorflow.keras.layers import LSTM, Dense # type: ignore
+from tensorflow.keras.callbacks import EarlyStopping # type: ignore
 import pickle
 
 os.makedirs("IA_training/model/", exist_ok=True)
@@ -100,13 +101,30 @@ for start in starts:
     X_tr_seq_balanced = X_tr_seq[selected_indices]
     y_tr_seq_balanced = y_tr_seq[selected_indices]
 
+    noise = np.random.normal(0, 0.01, X_tr_seq_balanced.shape)
+    X_augmented = X_tr_seq_balanced + noise
+    y_augmented = y_tr_seq_balanced.copy()
+
+    # Combine original + augmented
+    X_train_final = np.vstack([X_tr_seq_balanced, X_augmented])
+    y_train_final = np.concatenate([y_tr_seq_balanced, y_augmented])
+
+
     # d) Définition et entraînement du modèle LSTM
     model = Sequential()
     model.add(LSTM(64, input_shape=(timesteps, len(features))))
     model.add(Dense(32, activation='relu'))
     model.add(Dense(1, activation='sigmoid'))
     model.compile(loss='binary_crossentropy', optimizer='adam')
-    model.fit(X_tr_seq_balanced, y_tr_seq_balanced, epochs=50, batch_size=32, verbose=0)
+
+    early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+    model.fit(
+        X_train_final, y_train_final,
+        epochs=50, batch_size=32, verbose=0,
+        validation_data=(X_va_seq, y_va_seq),
+        callbacks=[early_stop]
+    )
 
     # e) Prédiction sur l'ensemble de validation et optimisation du seuil
     p_va = model.predict(X_va_seq).flatten()

@@ -9,6 +9,7 @@ from sklearn.metrics import (
 )
 from tensorflow.keras.models import Sequential, save_model # type: ignore
 from tensorflow.keras.layers import LSTM, Dense # type: ignore
+from tensorflow.keras.callbacks import EarlyStopping # type: ignore
 import pickle
 
 os.makedirs("IA_training/model/", exist_ok=True)
@@ -106,7 +107,15 @@ for start in starts:
     model.add(Dense(32, activation='relu'))
     model.add(Dense(1, activation='sigmoid'))
     model.compile(loss='binary_crossentropy', optimizer='adam')
-    model.fit(X_tr_seq_balanced, y_tr_seq_balanced, epochs=50, batch_size=32, verbose=0)
+
+    early_stop = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+    model.fit(
+        X_tr_seq_balanced, y_tr_seq_balanced,
+        epochs=50, batch_size=32, verbose=0,
+        validation_data=(X_va_seq, y_va_seq),
+        callbacks=[early_stop]
+    )
 
     # e) Prédiction sur l'ensemble de validation et optimisation du seuil
     p_va = model.predict(X_va_seq).flatten()
