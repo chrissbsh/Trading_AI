@@ -171,7 +171,7 @@ if best_model is not None:
     print(f"Seuil optimal: {best_threshold:.4f}")
     
     # Sauvegarder le modèle
-    save_model(best_model, "IA_training/model/best_lstm_model.keras")
+    save_model(best_model, "IA_training/model/best_lstm_model_v4.keras")
     
     # Sauvegarder le scaler, le seuil et les métadonnées
     model_config = {
@@ -182,7 +182,7 @@ if best_model is not None:
         "performance": best_window_info,
     }
     
-    with open("IA_training/model/model_config.pkl", "wb") as f:
+    with open("IA_training/model/model_config_v4.pkl", "wb") as f:
         pickle.dump(model_config, f)
         
     print("Modèle et configuration sauvegardés avec succès dans le dossier 'IA_training/model/'")

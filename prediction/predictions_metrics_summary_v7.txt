@@ -1,0 +1,15 @@
+
+=== Resultats du modele ===
+Total predictions : 5001
+Bonnes predictions : 2911
+Mauvaises predictions : 2090
+Accuracy : 0.5821
+F1 Score : 0.7318
+Precision : 0.5967
+Recall : 0.9463
+
+=== Confusion Matrix ===
+True Negatives (prevu 0 / vrai 0) : 59
+False Positives (prevu 1 / vrai 0) : 1928
+False Negatives (prevu 0 / vrai 1) : 162
+True Positives (prevu 1 / vrai 1) : 2852

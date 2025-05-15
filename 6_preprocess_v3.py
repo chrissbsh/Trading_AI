@@ -1,68 +1,55 @@
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 import numpy as np
-from datetime import datetime
 
 directory = 'csv_data/consolidated_data/'
 
-# Load the CSV file
+# Charger le CSV
 df = pd.read_csv(directory + 'complete_data.csv')
+print(f"Shape initial : {df.shape}")
 
-print("df shape: ", df.shape)
-
-# Convert the 'Date' column to datetime format
+# Conversion date + tri
 df['Date'] = pd.to_datetime(df['Date'])
-
-# Remove columns with only one unique value or no value
-df = df.loc[:, df.nunique(dropna=True) > 1]
-
-# Sort by date just to ensure chronological order
 df = df.sort_values(by='Date')
 
-# Function to determine if a column is numeric
-def is_numeric_column(series):
-    return pd.api.types.is_numeric_dtype(series)
+# Suppression colonnes constantes
+before = df.shape[1]
+df = df.loc[:, df.nunique(dropna=True) > 1]
+after = df.shape[1]
+print(f"Colonnes constantes supprimées : {before - after}")
 
-# Initialize the scaler for standardization
-scaler = StandardScaler()
-
-# Create a copy of the DataFrame to store normalized data
+# Copie pour normalisation
 df_normalized = df.copy()
 
+binary_cols = ['vix_direction', 'vix_high', 'macro_regime']
+
+# Normaliser toutes colonnes numériques sauf Date et SP500 Close
 for column in df.columns:
-    if column == 'Date' or column.startswith('SP500_historical_data_Close'):
-        # Skip normalization for 'Date' and SP500-related technical indicators
+    if column in ['Date', 'SP500_historical_data_Close'] + binary_cols:
         continue
-    elif is_numeric_column(df[column]):
-        # Replace inf/-inf with NaN
+    if pd.api.types.is_numeric_dtype(df[column]):
         df[column] = df[column].replace([np.inf, -np.inf], np.nan)
-        # Replace NaN with the median
         median_value = df[column].median()
         df_normalized[column] = df[column].fillna(median_value)
-        # Apply StandardScaler
-        df_normalized[column] = scaler.fit_transform(df_normalized[[column]])
+        df_normalized[column] = StandardScaler().fit_transform(df_normalized[[column]])
     else:
         df_normalized[column] = df[column]
 
-# Remove columns where all values are zero
+# Supprimer colonnes full zéro
+before = df_normalized.shape[1]
 df_normalized = df_normalized.loc[:, (df_normalized != 0).any(axis=0)]
+after = df_normalized.shape[1]
+print(f"Colonnes full zéro supprimées : {before - after}")
 
-# Move the 'SP500_historical_data_Close' column and its relatives after 'Date'
-sp500_cols = [col for col in df_normalized.columns if col.startswith('sp500_')]
+# Réorganisation colonnes : Date + SP500 + sp500_* + reste
 cols = list(df_normalized.columns)
-for col in sp500_cols:
-    cols.remove(col)
-    cols.insert(1, col)
-df_normalized = df_normalized[cols]
+sp500_cols = [col for col in cols if col.startswith('sp500_')]
+other_cols = [col for col in cols if col not in ['Date', 'SP500_historical_data_Close'] + sp500_cols]
+new_order = ['Date', 'SP500_historical_data_Close'] + sp500_cols + other_cols
+df_normalized = df_normalized[new_order]
 
-# Ensure 'SP500_historical_data_Close' is placed right after 'Date'
-cols = list(df_normalized.columns)
-cols.remove('SP500_historical_data_Close')
-cols.insert(1, 'SP500_historical_data_Close')
-df_normalized = df_normalized[cols]
-
-# Save the normalized DataFrame to a new CSV file
+# Sauvegarde
 df_normalized.to_csv(directory + 'normalized_complete_data.csv', index=False)
-
-print("df_normalized shape: ", df_normalized.shape)
-print("Le fichier normalisé avec les features SP500 a été sauvegardé")
+print(f"Shape final : {df_normalized.shape}")
+print("Fichier normalisé sauvegardé : normalized_complete_data.csv")
+print(f"Colonnes finales : {len(df_normalized.columns)} features")

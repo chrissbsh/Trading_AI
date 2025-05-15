@@ -150,7 +150,7 @@ def load_and_predict(
 
     # Sauvegarde dans fichier texte
     with open(metrics_output_path, "w") as f:
-        f.write("=== Resultats du modele ===\n")
+        f.write("\n=== Resultats du modele ===\n")
         f.write(f"Total predictions : {total_predictions}\n")
         f.write(f"Bonnes predictions : {correct_predictions}\n")
         f.write(f"Mauvaises predictions : {incorrect_predictions}\n")
@@ -158,8 +158,6 @@ def load_and_predict(
         f.write(f"F1 Score : {f1:.4f}\n")
         f.write(f"Precision : {prec:.4f}\n")
         f.write(f"Recall : {rec:.4f}\n")
-
-        f.write("\n\n")
 
         f.write("\n=== Confusion Matrix ===\n")
         f.write(f"True Negatives (prevu 0 / vrai 0) : {tn}\n")
