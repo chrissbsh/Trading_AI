@@ -9,7 +9,8 @@ import pandas as pd
 import pickle
 
 data_path = "csv_data/consolidated_data/normalized_complete_data.csv"
-df = load_and_prepare_data(data_path)
+prediction_horizon = 7
+df = load_and_prepare_data(data_path, prediction_horizon=prediction_horizon)
 features = [col for col in df.columns if col not in ["Date", "target"]]
 
 model, scaler = train(df, features)

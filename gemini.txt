@@ -1,0 +1,70 @@
+Okay, c'est une excellente idée de structurer ce code pour une meilleure maintenabilité et flexibilité !
+Voici une proposition de découpage en plusieurs fichiers.
+
+**Structure des Fichiers Proposée :**
+
+1.  `config.py`: Contiendra tous les paramètres globaux et les constantes.
+2.  `data_loader.py`: Pour charger et effectuer la division initiale des données.
+3.  `preprocessing.py`: Fonctions de prétraitement (calcul de retour, seuils, séquences, jitter, scaling).
+4.  `feature_selection.py`: Pour la sélection de features (ex: SHAP).
+5.  `model_architectures.py`: Définition des modèles (ex: LSTM).
+6.  `training.py`: Logique de la boucle walk-forward, entraînement du modèle, sauvegarde du meilleur modèle.
+7.  `evaluation.py`: Fonctions pour calculer les métriques (F1, PnL, Sharpe, etc.).
+8.  `inference.py`: Pour charger un modèle et faire des prédictions sur de nouvelles données.
+9.  `backtesting.py`: Pour la logique de backtesting du portefeuille.
+10. `pipeline.py`: Le fichier principal qui orchestre l'ensemble du processus.
+11. `utils.py` (Optionnel) : Petites fonctions utilitaires génériques.
+
+**Explications et Améliorations :**
+
+1.  **`config.py`**: Centralise tous les paramètres. Facile à modifier. J'ai ajouté `set_seeds()` pour la reproductibilité.
+2.  **`data_loader.py`**: Gère le chargement, la division hold-out/rolling, et la génération des dates de début pour le walk-forward et les splits.
+3.  **`preprocessing.py`**: Contient toutes les étapes de transformation de données.
+    *   `compute_future_return`, `make_thresholds`, `label_from_thresholds`, `build_sliding_thresholds`, `label_with_sliding_thresholds` sont conservées.
+    *   `create_sequences`, `add_jitter`, `scale_features` sont aussi là.
+    *   Une fonction `preprocess_fold_data` orchestre le prétraitement pour un pli du walk-forward, crucialement **recalculant les seuils sur la base combinée (train+val+test) de CE PLI UNIQUEMENT**. C'est la clé pour "seuils recalculés dans chaque fenêtre d’entraînement" sans fuite d'information des plis futurs.
+4.  **`feature_selection.py`**: Isolé pour la sélection de caractéristiques (SHAP ici).
+5.  **`model_architectures.py`**: Définit la ou les architectures de modèles. `AVAILABLE_MODELS` permet de choisir facilement l'architecture dans le pipeline.
+6.  **`evaluation.py`**: Fonctions pour calculer les métriques de classification et PnL/Sharpe.
+7.  **`training.py`**:
+    *   Contient la boucle `train_walk_forward`.
+    *   Appelle `preprocess_fold_data` pour chaque pli.
+    *   Gère l'entraînement, l'évaluation sur le set de validation du pli, la sélection du meilleur modèle (basé sur `F1_val`), et sa sauvegarde.
+    *   La sauvegarde inclut le modèle Keras, le `scaler`, les `features_list` utilisées, et les `fold_thresholds_map` spécifiques au meilleur pli.
+8.  **`inference.py`**:
+    *   `predict_with_model` charge un modèle sauvegardé et sa configuration.
+    *   Prétraite les nouvelles données en utilisant le `scaler` et les `features_list` sauvegardés.
+    *   Pour l'étiquetage des "vraies" valeurs (si disponibles pour évaluation), il utilise les `fold_thresholds_map` du *meilleur pli d'entraînement*. C'est une heuristique : on suppose que les seuils du meilleur modèle sont les plus pertinents. Si les nouvelles données sont très éloignées dans le temps, cette carte de seuils pourrait être moins pertinente. Une stratégie plus avancée pourrait être de reconstruire une carte de seuils sur une période récente des nouvelles données si disponible.
+    *   Sauvegarde les prédictions et les métriques.
+9.  **`backtesting.py`**: Fonction `run_simple_backtest` pour simuler une stratégie de portefeuille. J'ai inclus une version itérative plus réaliste pour la gestion du cash et des frais.
+10. **`pipeline.py`**:
+    *   Orchestre les étapes principales : chargement, sélection de features, entraînement walk-forward, évaluation sur le hold-out (optionnelle ici, mais la logique est là), et un exemple d'inférence + backtest.
+    *   La fonction `run_training_pipeline` s'occupe de l'entraînement et de la sauvegarde.
+    *   `run_holdout_evaluation` est une fonction dédiée pour évaluer le meilleur modèle sur le set hold-out.
+    *   Le `if __name__ == "__main__":` montre comment enchaîner ces étapes. Vous pouvez commenter/décommenter des phases.
+
+**Pour utiliser/changer les éléments :**
+
+*   **Paramètres** : Modifier `config.py`.
+*   **Architecture d'IA** :
+    1.  Ajouter une nouvelle fonction de construction de modèle dans `model_architectures.py` (ex: `build_my_new_model`).
+    2.  L'ajouter au dictionnaire `AVAILABLE_MODELS`.
+    3.  Dans `pipeline.py`, changer la valeur de `selected_model_arch` (ou passer en argument) au nom de votre nouveau modèle.
+*   **Backtest** :
+    1.  Modifier `backtesting.py`, par exemple la logique de `run_simple_backtest` ou ajouter une nouvelle fonction `run_advanced_backtest`.
+    2.  Dans `pipeline.py`, appeler votre nouvelle fonction de backtest. Vous pouvez aussi changer le `POSITION_SIZE_MAP` dans `config.py`.
+*   **Preprocessing** :
+    1.  Les étapes de base sont dans `preprocessing.py`.
+    2.  La fonction `preprocess_fold_data` les assemble. Vous pouvez modifier cette fonction pour changer l'ordre ou ajouter/supprimer des étapes.
+    3.  Si vous ajoutez une nouvelle étape (ex: un autre type de normalisation), écrivez la fonction dans `preprocessing.py` et intégrez-la dans `preprocess_fold_data`.
+
+**Points Clés de la Conception "Sans Fuite d'Information" et Flexibilité :**
+
+*   **Seuils Recalculés**: `preprocess_fold_data` recalcule `fold_thresholds_map` pour chaque pli du walk-forward sur la base des données `tr_df, va_df, te_df` de ce pli uniquement. C'est crucial.
+*   **Purged Walk-Forward**: Géré par `data_loader.py` avec `BUFFER_DAYS`.
+*   **Feature Selection**: Faite uniquement sur `df_roll` avant le début du walk-forward.
+*   **Hold-out**: Strictement séparé et utilisé uniquement après la sélection du "meilleur" modèle issu du processus walk-forward. Pour l'évaluation du hold-out, on utilise les artefacts du meilleur modèle (scaler, seuils du *meilleur pli*).
+*   **Modularité**: Chaque fichier a une responsabilité claire, facilitant les modifications ciblées.
+
+N'oubliez pas de créer les dossiers `IA_training/model` et `prediction` si ce n'est pas déjà fait, ou le code le fera pour vous.
+Ce découpage devrait grandement améliorer la gestion de votre projet !

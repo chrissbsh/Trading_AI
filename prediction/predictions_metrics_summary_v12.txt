@@ -1,0 +1,13 @@
+=== Resultats du modele (multi-class) ===
+Total predictions : 5030
+Accuracy : 0.1573
+F1 Score (weighted) : 0.1692
+Precision (weighted) : 0.2281
+Recall (weighted) : 0.1573
+
+=== Confusion Matrix ===
+[[ 107   73   75    0    0]
+ [ 588  188  240    0    0]
+ [1335  629  496    0    0]
+ [ 493  202  346    0    0]
+ [  87   74   97    0    0]]

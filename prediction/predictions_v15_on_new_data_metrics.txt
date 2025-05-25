@@ -1,0 +1,12 @@
+F1: 0.3531
+BalAcc: 0.3491
+Precision: 0.3593
+Recall: 0.3750
+Accuracy: 0.3750
+PnL: 0.5210
+Sharpe: 0.2811
+
+Confusion matrix:
+[[ 28  29 107]
+ [ 25  44  84]
+ [ 38  52 129]]

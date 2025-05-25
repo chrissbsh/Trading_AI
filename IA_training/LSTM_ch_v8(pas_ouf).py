@@ -22,16 +22,6 @@ df = pd.read_csv("csv_data/consolidated_data/normalized_complete_data.csv", pars
 df["target_7d"] = ((df["SP500_historical_data_Close"].shift(-7) - df["SP500_historical_data_Close"]) 
                    / df["SP500_historical_data_Close"] > 0.05).astype(int)  # +5% minimum
 df = df.iloc[:-7]
-df["std_21"] = df["sp500_return_1d"].rolling(21).std()
-df["hv_30"]  = df["sp500_return_1d"].rolling(30).std()
-df["r_sp_gold"] = df["SP500_historical_data_Close"] / df["gold_historical_data_Close"]
-df["r_sp_dxy"]  = df["SP500_historical_data_Close"] / df["dollar_index_historical_data_Close"]
-df["r_sp_bond"] = df["SP500_historical_data_Close"] / df["Market_yield_US_10_year_DGS10"]
-vix = df["^VIX_historical_data_Close"]
-df["vix_direction"] = vix.diff().fillna(0).gt(0).astype(int)
-df["vix_high"]      = vix.gt(vix.rolling(63).median()).astype(int)
-if "PMI" in df.columns:
-    df["macro_regime"] = (df["PMI"] > 50).astype(int)
 df.dropna(inplace=True)
 exclude = {"Date", "target_7d"}
 features = [c for c in df.columns if c not in exclude]

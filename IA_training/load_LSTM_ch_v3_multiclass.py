@@ -37,7 +37,7 @@ def load_and_predict(
     if config_path is None:
         config_path = f"IA_training/model/model_config_v{version}.pkl"
     if output_path is None:
-        output_path = f"csv_data/prediction/predictions_v{version}.csv"
+        output_path = f"prediction/predictions_v{version}.csv"
 
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Modèle introuvable : {model_path}")
@@ -216,4 +216,4 @@ if __name__ == "__main__":
     )
 
     result_df_bt = backtest_portfolio(result_df)
-    result_df_bt.to_csv(f"csv_data/prediction/backtest_results_v{version}.csv", index=False)
+    result_df_bt.to_csv(f"prediction/backtest_results_v{version}.csv", index=False)

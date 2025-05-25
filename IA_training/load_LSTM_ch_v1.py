@@ -17,7 +17,7 @@ def load_and_predict(
     prediction_horizon=7,
     model_path="IA_training/model/best_lstm_model.keras",
     config_path="IA_training/model/model_config.pkl",
-    output_path="csv_data/prediction/predictions.csv"
+    output_path="prediction/predictions.csv"
 ):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"Modèle introuvable : {model_path}")
@@ -175,5 +175,5 @@ if __name__ == "__main__":
         data_path="csv_data/consolidated_data/normalized_complete_data.csv",
         date_col="Date",
         prediction_horizon=7,
-        output_path="csv_data/prediction/predictions.csv"
+        output_path="prediction/predictions.csv"
     )
