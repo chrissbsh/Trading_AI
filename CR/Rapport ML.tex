@@ -1,0 +1,67 @@
+\documentclass[12pt]{report}  % ou article si tu veux moins structuré
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[french]{babel}
+\usepackage{amsmath, amssymb}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{titlesec}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{ulem} % pour souligner le titre
+
+\geometry{a4paper, margin=2.5cm}
+
+% Pour personnaliser les titres
+\titleformat{\chapter}[hang]
+  {\normalfont\Huge\bfseries\centering}{}{0pt}{\uline}  % souligné + centré
+
+\titleformat{\section}
+  {\normalfont\Large\bfseries}{}{0pt}{\uline}
+
+\title{
+  \vspace{2cm}
+  \textbf{\uline{\Huge Rapport machine learning}}\\[1cm]
+}
+\author{\Large Clément Berthoud, Christophe Boshra}
+\date{6 juin 2025}
+
+
+% Début du contenu du doc 
+\begin{document}
+
+\maketitle
+
+\tableofcontents
+\newpage
+
+% ====================
+\chapter{Introduction}
+\vspace{4cm}
+% ← espace vide pour écrire à la main ou compléter plus tard
+
+% ====================
+\chapter{Objectifs}
+\section{Partie 1}
+\vspace{0cm}
+
+Bonjour à toutes et tous 
+
+
+% ====================
+\chapter{Méthodologie}
+\section{Collecte des données}
+\vspace{4cm}
+
+\section{Analyse}
+\vspace{4cm}
+
+% ====================
+\chapter{Résultats}
+\vspace{4cm}
+
+% ====================
+\chapter{Conclusion}
+\vspace{4cm}
+
+\end{document}

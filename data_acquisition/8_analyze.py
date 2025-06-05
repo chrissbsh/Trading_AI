@@ -45,21 +45,17 @@ def load_and_prepare_data(filepath='csv_data/consolidated_data/normalized_comple
 def create_manual_target(df):
     """Crée une target multi-classes avec des seuils prédéfinis"""
     def label_change(x):
-        if x <= -0.043:
-            return 0  # Forte baisse
-        elif x <= -0.009:
-            return 1  # Baisse modérée
-        elif x <= 0.017:
-            return 2  # Stable
-        elif x <= 0.041:
-            return 3  # Hausse modérée
+        if x <= -0.0055:
+            return 0  # baisse
+        elif x <= 0.0107:
+            return 1  # neutre
         else:
-            return 4  # Forte hausse
+            return 2  # hausse
     
     df['target_multi_manual'] = df['sp500_return_7d'].apply(label_change)
     return df
 
-def create_optimal_target(df, k=5):
+def create_optimal_target(df, k=3):
     """Crée une target multi-classes avec des seuils optimaux (quantiles équilibrés)"""
     # Calcul des seuils optimaux
     quantiles = np.linspace(0, 1, k + 1)
@@ -203,7 +199,7 @@ def main():
     
     # Création des targets
     df = create_manual_target(df)
-    df, optimal_thresholds = create_optimal_target(df, k=5)
+    df, optimal_thresholds = create_optimal_target(df, k=3)
     
     # Analyses statistiques
     analyze_returns_distribution(df)
