@@ -24,7 +24,7 @@ def create_target(df):
     """
     Ajoute une colonne 'ret_future' qui mesure l'évolution de TARGET_PRICE_COL comme (prix actuel - prix passé) / prix actuel.
     """
-    df['ret_future'] = (df[TARGET_PRICE_COL] - df[TARGET_PRICE_COL].shift(PRED_HORIZON)) / df[TARGET_PRICE_COL]
+    df['ret_future'] = (df[TARGET_PRICE_COL].shift(-PRED_HORIZON) - df[TARGET_PRICE_COL]) / df[TARGET_PRICE_COL]
     df.dropna(subset=['ret_future'], inplace=True)
     scaler = StandardScaler()
     df['ret_future'] = scaler.fit_transform(df[['ret_future']])
@@ -77,11 +77,11 @@ def main():
 
     print("✅ Corrélations avec la target :")
     # Plot the correlations
-    plt.figure(figsize=(8, 6))
-    sns.barplot(x=correlations.values, y=correlations.index, palette="viridis")
-    plt.title(f'Correlation TARGET_PRICE_COL')
-    plt.xlabel('Correlation Coefficient')
-    plt.ylabel('Features')
+    # plt.figure(figsize=(8, 6))
+    # sns.barplot(x=correlations.values, y=correlations.index, palette="viridis")
+    # plt.title(f'Correlation TARGET_PRICE_COL')
+    # plt.xlabel('Correlation Coefficient')
+    # plt.ylabel('Features')
 
     # Tableau trié par valeur absolue croissante
     sorted_corr = correlations.reindex(correlations.abs().sort_values().index)
@@ -107,8 +107,8 @@ def main():
     print("\nTableau des corrélations avec ret_future (ordre croissant en valeur absolue) :")
     print(sorted_corr)
 
-    # plt.show()
-    plt.close("all")
+    plt.show()
+    # plt.close("all")
 
     input("Press Enter to continue...")
 
@@ -133,45 +133,45 @@ def main():
 
     input("Press Enter to continue...")
 
-    # 3. Prétraitement (labeling, thresholds, jitter, split walk-forward)
-    print("🔹 Prétraitement des données...")
-    walk_forward_splits = prepare_data(
-        df, selected_features,
-        date_col=DATE_COL,
-        target_price_col=TARGET_PRICE_COL,
-        pred_horizon=PRED_HORIZON,
-        n_classes=N_CLASSES,
-        threshold_strategy=THRESHOLD_STRATEGY,
-        threshold_step_months=THRESHOLD_STEP_MONTHS,
-        fixed_thresholds=FIXED_THRESHOLDS,
-        jitter_ratio=JITTER_RATIO,
-        timesteps=TIMESTEPS,
-        train_years=TRAIN_YEARS,
-        val_years=VAL_YEARS,
-        test_months=TEST_MONTHS,
-        buffer_days=BUFFER_DAYS,
-        holdout_start=HOLDOUT_START_DATE,
-        holdout_end=HOLDOUT_END_DATE
-    )
+    # # 3. Prétraitement (labeling, thresholds, jitter, split walk-forward)
+    # print("🔹 Prétraitement des données...")
+    # walk_forward_splits = prepare_data(
+    #     df, selected_features,
+    #     date_col=DATE_COL,
+    #     target_price_col=TARGET_PRICE_COL,
+    #     pred_horizon=PRED_HORIZON,
+    #     n_classes=N_CLASSES,
+    #     threshold_strategy=THRESHOLD_STRATEGY,
+    #     threshold_step_months=THRESHOLD_STEP_MONTHS,
+    #     fixed_thresholds=FIXED_THRESHOLDS,
+    #     jitter_ratio=JITTER_RATIO,
+    #     timesteps=TIMESTEPS,
+    #     train_years=TRAIN_YEARS,
+    #     val_years=VAL_YEARS,
+    #     test_months=TEST_MONTHS,
+    #     buffer_days=BUFFER_DAYS,
+    #     holdout_start=HOLDOUT_START_DATE,
+    #     holdout_end=HOLDOUT_END_DATE
+    # )
 
-    # 4. Boucle d'entraînement walk-forward
-    print("🔹 Démarrage de l'entraînement walk-forward...")
-    for i, (X_train, y_train, X_val, y_val, X_test, y_test, test_dates) in enumerate(walk_forward_splits):
-        print(f"📦 Split {i+1}/{len(walk_forward_splits)}")
+    # # 4. Boucle d'entraînement walk-forward
+    # print("🔹 Démarrage de l'entraînement walk-forward...")
+    # for i, (X_train, y_train, X_val, y_val, X_test, y_test, test_dates) in enumerate(walk_forward_splits):
+    #     print(f"📦 Split {i+1}/{len(walk_forward_splits)}")
 
-        model = lstm_model()
+    #     model = lstm_model()
         
-        history, best_model = train_model(
-            model, X_train, y_train,
-            X_val, y_val,
-            epochs=EPOCHS,
-            batch_size=BATCH_SIZE,
-            patience=PATIENCE,
-            lr=LEARNING_RATE,
-            model_save_path=f"{MODEL_SAVE_DIR}/model_v{MODEL_VERSION}_split{i+1}.h5"
-        )
+    #     history, best_model = train_model(
+    #         model, X_train, y_train,
+    #         X_val, y_val,
+    #         epochs=EPOCHS,
+    #         batch_size=BATCH_SIZE,
+    #         patience=PATIENCE,
+    #         lr=LEARNING_RATE,
+    #         model_save_path=f"{MODEL_SAVE_DIR}/model_v{MODEL_VERSION}_split{i+1}.h5"
+    #     )
 
-        # Optionnel : évaluation ou prédictions ici
+    #     # Optionnel : évaluation ou prédictions ici
 
 if __name__ == "__main__":
     main()

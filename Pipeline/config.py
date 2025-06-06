@@ -10,14 +10,14 @@ EXCLUDE_COLS_FROM_FEATURES = {"Date", "ret_future", "target"} # Will be updated 
 TOP_N_FEATURES = 30
 
 # ─────────────────── PREPROCESSING PARAMETERS ──────────────────── #
-PRED_HORIZON = 14  # jours, combien de pas dans le futur on veut prédire (horizon = 5 → prédire t+5 à partir de t)
+PRED_HORIZON = 30  # jours, combien de pas dans le futur on veut prédire (horizon = 5 → prédire t+5 à partir de t)
 N_CLASSES = 3
 SEQUENCE_LENGTH = 90  # nombre de pas de temps utilisés pour prédire la suite
 STRIDE = 1  # pas de temps entre les séquences stride=1 → toutes les séquences se chevauchent, stride=sequence_length → elles ne se chevauchent pas.
 JITTER_RATIO = 0.05  # % du σ pour le jitter
 THRESHOLD_STEP_MONTHS = 6 # For build_sliding_thresholds
 THRESHOLD_STRATEGY = "fixed" # "fixed" or "adaptive"
-FIXED_THRESHOLDS = np.array([-0.0055, 0.0107])
+FIXED_THRESHOLDS = np.array([-0.05, 0.05])
 
 # ──────────────── WALK-FORWARD PARAMETERS ───────────────── #
 TRAIN_YEARS = 3
