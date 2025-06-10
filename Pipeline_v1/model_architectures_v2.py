@@ -1,6 +1,5 @@
 from tensorflow.keras.models import Sequential # type: ignore
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input # type: ignore
-from tensorflow.keras import regularizers # type: ignore
 
 def lstm_model(input_shape, n_classes):
     model = Sequential()
@@ -15,12 +14,11 @@ def lstm_model(input_shape, n_classes):
 
 def lstm_model_v2(input_shape, n_classes):
     model = Sequential()
-    model.add(Input(shape=input_shape))
-    model.add(LSTM(64, return_sequences=False, kernel_regularizer=regularizers.l2(0.01)))
-    model.add(Dropout(0.3))
-    model.add(Dense(32, activation='relu'))
+    model.add(LSTM(64, return_sequences=True, input_shape=input_shape))
+    model.add(LSTM(64))
+    model.add(Dense(128, activation='relu'))
+    model.add(Dropout(0.2))
     model.add(Dense(n_classes, activation='softmax'))
-    return model
 
     print("model.summary: ")
     model.summary()

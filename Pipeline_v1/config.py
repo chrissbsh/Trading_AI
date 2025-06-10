@@ -7,7 +7,7 @@ TARGET_PRICE_COL = "SP500_historical_data_Close" # Column used for future return
 EXCLUDE_COLS_FROM_FEATURES = {"Date", "ret_future", "target"} # Will be updated after feature selection
 
 # ──────────────────── FEATURE SELECTION PARAMETERS ───────────────── #
-TOP_N_FEATURES = 25
+TOP_N_FEATURES = 30
 
 # ─────────────────── PREPROCESSING PARAMETERS ──────────────────── #
 PRED_HORIZON = 30  # jours, combien de pas dans le futur on veut prédire (horizon = 5 → prédire t+5 à partir de t)
