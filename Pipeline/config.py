@@ -1,7 +1,7 @@
 import numpy as np
 
 # ───────────────────────── DATA PARAMETERS ─────────────────────── #
-DATA_FILE_PATH = "csv_data/consolidated_data/normalized_complete_data.csv"
+DATA_FILE_PATH = "csv_data/consolidated_data/final_complete_data.csv"
 DATE_COL = "Date"
 TARGET_PRICE_COL = "SP500_historical_data_Close" # Column used for future return calculation
 EXCLUDE_COLS_FROM_FEATURES = {"Date", "ret_future", "target"} # Will be updated after feature selection
@@ -35,8 +35,8 @@ LEARNING_RATE = 0.01
 
 # ───────────────────── OUTPUT PARAMETERS ────────────────────── #
 MODEL_SAVE_DIR = "Pipeline/model"
-PREDICTION_SAVE_DIR = "prediction"
-MODEL_VERSION = "1" # Example, can be incremented or passed as arg
+PREDICTION_SAVE_DIR = "Pipeline/prediction"
+MODEL_VERSION = "2" # Example, can be incremented or passed as arg
 
 # ─────────────────── BACKTESTING PARAMETERS ──────────────────── #
 INITIAL_CASH = 1_000

@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from config import *
+import os
 from feature_selection import select_top_features_pca, select_top_features_shap
 from model_architectures_v2 import *
 import matplotlib.pyplot as plt
@@ -342,6 +343,13 @@ def main():
     plt.xlabel('Prédictions')
     plt.ylabel('Vérités Terrain')
     plt.show()
+
+    # g. Sauvegarde du modèle final
+    print("🔹 Sauvegarde du modèle final...")
+    os.makedirs(MODEL_SAVE_DIR, exist_ok=True)
+    model_path = os.path.join(MODEL_SAVE_DIR, f"model_v{MODEL_VERSION}.keras")
+    final_model.save(model_path)
+    print(f"✅ Modèle sauvegardé à {model_path}")
 
 
 if __name__ == "__main__":

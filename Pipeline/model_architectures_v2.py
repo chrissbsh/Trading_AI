@@ -20,9 +20,8 @@ def lstm_model_v2(input_shape, n_classes):
     model.add(Dropout(0.3))
     model.add(Dense(32, activation='relu'))
     model.add(Dense(n_classes, activation='softmax'))
-    return model
 
-    print("model.summary: ")
-    model.summary()
+    # print("model.summary: ")
+    # model.summary()
 
     return model
