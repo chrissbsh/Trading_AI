@@ -2,6 +2,9 @@ import pandas as pd
 import numpy as np
 from config import *
 import os
+import random
+import tensorflow as tf
+
 from feature_selection import select_top_features_pca, select_top_features_shap
 
 from tensorflow.keras.models import Sequential # type: ignore
@@ -9,7 +12,6 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Lambda # type: 
 from tensorflow.keras import regularizers # type: ignore
 from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator # type: ignore
 from tensorflow.keras.callbacks import EarlyStopping # type: ignore
-from focal_loss import SparseCategoricalFocalLoss
 
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, f1_score, balanced_accuracy_score
@@ -17,9 +19,9 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
 from tf_metrics import *
 
+from focal_loss import SparseCategoricalFocalLoss
+
 # ==================== REPRODUCTIBILITÉ ====================
-import random
-import tensorflow as tf
 
 # Fixer toutes les graines aléatoires
 SEED = 42
@@ -38,7 +40,9 @@ def lstm_model_v2(input_shape, seq_len_keep, n_classes):
     model = Sequential()
     model.add(Input(shape=input_shape))
     model.add(Lambda(lambda z: z[:, :seq_len_keep, :], name="truncate_future"))
-    model.add(LSTM(64, return_sequences=False, kernel_regularizer=regularizers.l2(0.01)))
+    model.add(LSTM(64, return_sequences=False, 
+                   kernel_regularizer=regularizers.l2(0.01)
+                   ))
     model.add(Dropout(0.3))
     model.add(Dense(32, activation='relu'))
     model.add(Dense(n_classes, activation='softmax'))
@@ -289,36 +293,64 @@ def main(cross_validation, debug_on, feature_selection_on):
     if debug_on:
         input("   [PAUSE] Vérifiez les features finales puis Entrée...")
 
-    # Préparation X/y finales
+    # --- 1. Division des données en Train / Validation / Test ---
+    print("🔹 Division chronologique des données...")
+
+    # Définir le point de séparation pour un split 80/20 sur df_main.
+    # C'est plus robuste que de calculer des tailles séparées.
+    split_idx = int(0.8 * len(df_main))
+
+    # Diviser df_main en ensembles d'entraînement et de validation
+    train_df = df_main.iloc[:split_idx]
+    val_df = df_main.iloc[split_idx:]
+
+    # df_holdout est notre ensemble de test final
+    test_df = df_holdout
+
+    print(f"Shapes des DataFrames : Train={train_df.shape}, Validation={val_df.shape}, Test={test_df.shape}")
+
+    # --- 2. Préparation des X/y et mise à l'échelle ---
+    X_train = train_df[final_feats]
+    y_train = train_df['target'].to_numpy()
+
+    X_val = val_df[final_feats]
+    y_val = val_df['target'].to_numpy()
+
+    X_test = test_df[final_feats]
+    y_test = test_df['target'].to_numpy()
+    date_test = test_df[DATE_COL].values
+
+    # Normalisation : .fit() uniquement sur le train, .transform() sur tous.
     final_scaler = StandardScaler()
-    X_tr = final_scaler.fit_transform(df_main[final_feats])
-    X_te = final_scaler.transform(df_holdout[final_feats])
-    y_tr = df_main['target'].to_numpy()
-    y_te = df_holdout['target'].to_numpy()
-    date_te = df_holdout[DATE_COL].values
-    print("🔹 Shapes finales X_tr, X_te, y_tr, y_te :", X_tr.shape, X_te.shape, y_tr.shape, y_te.shape)
-        
-    if debug_on:    
-        input("   [PAUSE] Vérifiez les données finales puis Entrée...")
+    X_train_scaled = final_scaler.fit_transform(X_train)
+    X_val_scaled   = final_scaler.transform(X_val)
+    X_test_scaled  = final_scaler.transform(X_test)
 
-    # Générateurs finaux
+    # Les noms sont plus clairs que X_tr, X_te, etc.
+    print("🔹 Shapes finales X (scaled) :", X_train_scaled.shape, X_val_scaled.shape, X_test_scaled.shape)
+    print("🔹 Shapes finales y :", y_train.shape, y_val.shape, y_test.shape)
+
+    if debug_on:
+        input("   [PAUSE] Vérifiez les données train/val/test puis Entrée...")
+
+    # --- 3. Création des TimeseriesGenerators ---
     full_seq = SEQUENCE_LENGTH + PRED_HORIZON
-    gen_tr   = TimeseriesGenerator(X_tr, y_tr, length=full_seq, batch_size=BATCH_SIZE)
-    gen_te   = TimeseriesGenerator(X_te, y_te, length=full_seq, batch_size=BATCH_SIZE)
-    print("🔹 Batches finaux train/holdout :", len(gen_tr), len(gen_te))
+    gen_train = TimeseriesGenerator(X_train_scaled, y_train, length=full_seq, batch_size=BATCH_SIZE)
+    gen_val   = TimeseriesGenerator(X_val_scaled, y_val, length=full_seq, batch_size=BATCH_SIZE)
+    gen_test  = TimeseriesGenerator(X_test_scaled, y_test, length=full_seq, batch_size=BATCH_SIZE)
 
-    # Après avoir créé les generators
-    print(f"Vérification : première séquence a {gen_tr[0][0].shape[1]} pas temporels")
+    print("🔹 Batches finaux train/validation/test :", len(gen_train), len(gen_val), len(gen_test))
+
+    # Vérification des séquences
+    print(f"Vérification : première séquence a {gen_train[0][0].shape[1]} pas temporels")
     print(f"Vérification : modèle attend {full_seq} pas, tronqué à {SEQUENCE_LENGTH}")
-    assert gen_tr[0][0].shape[1] == full_seq, "Incohérence dans la longueur des séquences"
+    assert gen_train[0][0].shape[1] == full_seq, "Incohérence dans la longueur des séquences"
 
-    cw_f = compute_class_weight('balanced', classes=np.unique(y_tr), y=y_tr)
-    
+    cw_f = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
     cw_dict_f = dict(enumerate(cw_f))
+    print("Class weights final :", cw_dict_f)
 
-    print("🔹 Class weights final :", cw_dict_f)
-        
-    if debug_on:    
+    if debug_on:
         input("   [PAUSE] Vérifiez les generators finaux puis Entrée...")
 
     # Entraînement final
@@ -326,39 +358,38 @@ def main(cross_validation, debug_on, feature_selection_on):
     metrics = ['accuracy', F1Macro(3), BalancedAcc(3)]
 
     gamma = 2.0
-
     loss_fn = SparseCategoricalFocalLoss(gamma=gamma, class_weight=cw_f)
 
     final_model.compile(optimizer='adam',
-                loss=loss_fn,          # cross-entropy ou focal loss maison
-                metrics=metrics)
+                        loss=loss_fn,
+                        metrics=metrics)
 
     early_stop = EarlyStopping(
-            monitor='val_f1_macro',   # ou 'val_balanced_accuracy'
-            mode='max',
-            patience=PATIENCE,
-            restore_best_weights=True)
+        monitor='val_f1_macro',
+        mode='max',
+        patience=PATIENCE,
+        restore_best_weights=True)
 
-    final_model.fit(gen_tr,
-                    validation_data=gen_te,
+    final_model.fit(gen_train,
+                    validation_data=gen_val,
                     epochs=EPOCHS,
-                callbacks=[early_stop], verbose=1)
-            
-    if debug_on:    
+                    callbacks=[early_stop], verbose=1)
+
+    if debug_on:
         input("   [PAUSE] Entraînement final OK. Entrée pour évaluation...")
 
     # Évaluation holdout
     print("\n--- Évaluation HOLDOUT ---")
-    proba_final = final_model.predict(gen_te)
-    y_true_final = np.concatenate([gen_te[i][1] for i in range(len(gen_te))])
+    proba_final = final_model.predict(gen_test)
+    y_true_final = np.concatenate([gen_test[i][1] for i in range(len(gen_test))])
     proba_final = proba_final[:len(y_true_final)]
 
     # Exemples de dates + prédictions (Hold-Out)
     print("🔹 Quelques exemples de fenêtres et dates (Hold-Out):")
     for j in range(min(3, len(y_true_final))):
-        start_date     = pd.to_datetime(date_te[j])
-        end_input_date = pd.to_datetime(date_te[j + SEQUENCE_LENGTH - 1])
-        pred_date      = pd.to_datetime(date_te[j + full_seq])
+        start_date     = pd.to_datetime(date_test[j])
+        end_input_date = pd.to_datetime(date_test[j + SEQUENCE_LENGTH - 1])
+        pred_date      = pd.to_datetime(date_test[j + full_seq])
         print(f"  Sample {j}: début={start_date.date()}, fin_input={end_input_date.date()}, date_prediction={pred_date.date()}, y_true={y_true_final[j]}")
         
     if debug_on:    
@@ -404,7 +435,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     # Je vous laisse la partie finale de sauvegarde telle quelle, avec les prints / input déjà présents.
 
 if __name__ == "__main__":
-    cross_validation = True  # False pour pipeline complet sans CV
+    cross_validation = False  # False pour pipeline complet sans CV
     debug_on = False
 
     feature_selection_on = True # True avec feature selection, False sans
