@@ -23,14 +23,14 @@ from focal_loss import SparseCategoricalFocalLoss
 
 # ==================== REPRODUCTIBILITÉ ====================
 
-# # Fixer toutes les graines aléatoires
-# SEED = 42
-# random.seed(SEED)
-# np.random.seed(SEED)
-# tf.random.set_seed(SEED)
+# Fixer toutes les graines aléatoires
+SEED = 123
+random.seed(SEED)
+np.random.seed(SEED)
+tf.random.set_seed(SEED)
 
-# # Configuration TensorFlow pour la reproductibilité
-# tf.config.experimental.enable_op_determinism()
+# Configuration TensorFlow pour la reproductibilité
+tf.config.experimental.enable_op_determinism()
 
 # Afficher plus de lignes et colonnes
 pd.set_option('display.max_rows', 500)
@@ -92,7 +92,7 @@ def create_target(df, tag="", debug_on=False):
 
     return df
 
-def main(cross_validation, debug_on, feature_selection_on):
+def main(debug_on, feature_selection_on):
     # -- Chargement et split --
     df_raw = load_data(debug_on)
     cols_to_drop = ["sp500_prev_close", "sp500_return_1d", "vix_direction", "vix_high"]
@@ -122,142 +122,6 @@ def main(cross_validation, debug_on, feature_selection_on):
     if debug_on:
         input("   [PAUSE] Vérifiez distributions puis Entrée...")
 
-    # -- Cross-validation ou pipeline complet --
-    if cross_validation:
-        print("🔹 Mode Validation Croisée activé")
-        tscv = TimeSeriesSplit(n_splits=5)
-        fold_stats = []
-
-        for fold, (train_idx, val_idx) in enumerate(tscv.split(df_main)):
-            print(f"\n========== FOLD {fold+1} ==========")
-            df_train = df_main.iloc[train_idx].copy()
-            df_val   = df_main.iloc[val_idx].copy()
-            date_train = df_train[DATE_COL].values
-            date_val   = df_val[DATE_COL].values
-            print(f"👉 Train: {len(df_train)}, Val: {len(df_val)}")
-            if debug_on:
-                input("   [PAUSE] Vérifiez les indexes de split puis Entrée...")
-
-            if feature_selection_on:
-                # Sélection de features sur df_train uniquement
-                print("🔹 Sélection features SHAP...")
-                raw_features = select_top_features_shap(df_train, top_n=TOP_N_FEATURES, target_col="ret_future")
-                features = [f for f in raw_features if f not in (DATE_COL, 'target', 'ret_future')]
-                if 'SP500_historical_data_Close' not in features:
-                    features.append('SP500_historical_data_Close')
-                print(f"   → features finales utilisées : {features}")
-
-                if debug_on:
-                    input("   [PAUSE] Vérifiez features puis Entrée...")
-
-            else:
-                features = [f for f in df_train.columns if f not in (DATE_COL, 'target', 'ret_future')]
-
-            # Préparation X/y
-            scaler = StandardScaler()
-            X_train = scaler.fit_transform(df_train[features])
-            X_val   = scaler.transform(df_val[features])
-            y_train = df_train['target'].to_numpy()
-            y_val   = df_val['target'].to_numpy()
-            print("🔹 Shape X_train, X_val, y_train, y_val :", X_train.shape, X_val.shape, y_train.shape, y_val.shape)
-            
-            if debug_on: 
-                input("   [PAUSE] Vérifiez les shapes puis Entrée...")
-
-            # Générateurs
-            full_seq = SEQUENCE_LENGTH + PRED_HORIZON
-            train_gen = TimeseriesGenerator(X_train, y_train, length=full_seq, batch_size=BATCH_SIZE)
-            val_gen   = TimeseriesGenerator(X_val,   y_val,   length=full_seq, batch_size=BATCH_SIZE)
-            print("🔹 Nombre de batches train/val :", len(train_gen), len(val_gen))
-
-            cw = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
-
-            cw_dict = dict(enumerate(cw))
-
-            print("🔹 Class weights pli :", cw_dict)
-            
-            if debug_on:
-                input("   [PAUSE] Vérifiez les generators puis Entrée...")
-
-            # Modèle
-            model = lstm_model_v2((full_seq, len(features)), SEQUENCE_LENGTH, N_CLASSES)
-            metrics = ['accuracy', F1Macro(3), BalancedAcc(3)]
-
-            gamma = 2.0
-
-            loss_fn = SparseCategoricalFocalLoss(gamma=gamma, class_weight=cw)
-
-            model.compile(optimizer='adam',
-                        loss=loss_fn,          # cross-entropy ou focal loss maison
-                        metrics=metrics)
-            
-            # model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-
-            print("🔹 Modèle compilé. Architecture :")
-            model.summary()
-
-            if debug_on:
-                input("   [PAUSE] Vérifiez l'architecture puis Entrée...")
-
-            # Entraînement
-            
-            # early = EarlyStopping(monitor='val_loss', patience=PATIENCE, restore_best_weights=True)
-            
-            early_stop = EarlyStopping(
-            monitor='val_f1_macro',   # ou 'val_balanced_accuracy'
-            mode='max',
-            patience=PATIENCE,
-            restore_best_weights=True)
-
-            model.fit(train_gen, validation_data=val_gen, epochs=EPOCHS,
-                      callbacks=[early_stop], verbose=1)
-            
-            if debug_on:    
-                input("   [PAUSE] Entraînement terminé. ⇨ Entrée pour prédictions...")
-
-            # Prédiction
-            y_proba = model.predict(val_gen)
-            # On reconstruit y_true de la même façon que plus bas
-            y_true = np.concatenate([val_gen[i][1] for i in range(len(val_gen))])
-            y_proba = y_proba[:len(y_true)]
-
-            # Exemples de dates + prédictions
-            print(f"🔹 Quelques exemples de fenêtres et dates (Fold {fold+1}):")
-            for j in range(min(3, len(y_true))):
-                start_date      = pd.to_datetime(date_val[j])
-                end_input_date  = pd.to_datetime(date_val[j + SEQUENCE_LENGTH - 1])
-                pred_date       = pd.to_datetime(date_val[j + full_seq])
-                print(f"  Sample {j}: début={start_date.date()}, fin_input={end_input_date.date()}, date_prediction={pred_date.date()}, y_true={y_true[j]}")
-            
-            if debug_on:    
-                input("   [PAUSE] Vérifiez dates des fenêtres CV puis Entrée...")
-
-            # Seuil de confiance & y_pred
-            ecart_min = ECART_MIN
-            y_pred = []
-            for p in y_proba:
-                top2 = np.sort(p)[::-1][:2]
-                y_pred.append(np.argmax(p) if (top2[0]-top2[1]>=ecart_min) else 1)
-            y_pred = np.array(y_pred)
-
-            # Scores
-            acc     = accuracy_score(y_true, y_pred)
-            bal_acc = balanced_accuracy_score(y_true, y_pred)
-            f1_m    = f1_score(y_true, y_pred, average='macro')
-            f1_w    = f1_score(y_true, y_pred, average='weighted')
-            print(f"   → Fold {fold+1} | Acc: {acc:.4f} | BalAcc: {bal_acc:.4f} | F1-macro: {f1_m:.4f} | F1-weighted: {f1_w:.4f}")
-            fold_stats.append((acc, bal_acc, f1_m, f1_w))
-
-        # Résumé CV
-        accs, bals, f1s, f1w = zip(*fold_stats)
-        print("\n===== RÉSULTATS CV =====")
-        print(f"Acc Moyenne: {np.mean(accs):.4f} ± {np.std(accs):.4f}")
-        print(f"BalAcc Moyenne: {np.mean(bals):.4f} ± {np.std(bals):.4f}")
-        print(f"F1-macro Moyenne: {np.mean(f1s):.4f} ± {np.std(f1s):.4f}")
-        print(f"F1-weighted Moyenne: {np.mean(f1w):.4f} ± {np.std(f1w):.4f}")
-        
-        input("   [PAUSE] Fin validation croisée. Entrée pour pipeline final...")
-
     if feature_selection_on:
         # -- Pipeline final sur holdout --
         print("\n🔹 Sélection finale des features sur tout df_main")
@@ -268,27 +132,7 @@ def main(cross_validation, debug_on, feature_selection_on):
         print("   → Features finales :", final_feats)
 
     else:
-        final_feats = [f for f in df_main.columns if f not in ('target', 'ret_future')]
-
-
-    # # Calculez la corrélation entre chaque feature et la target
-    # correlations = df_main[final_feats + ['target']].corr()['target'].abs().sort_values(ascending=False)
-    # print("Classement features les plus corrélées avec la target:")
-    # print(correlations.head(25))
-
-    # # Visualisez la séparabilité des classes
-    # import seaborn as sns
-    # import matplotlib.pyplot as plt
-
-    # # Pour les 3 meilleures features
-    # for feat in correlations.index[1:4]:  # Skip 'target' itself
-    #     plt.figure(figsize=(10, 6))
-    #     for classe in [0, 1, 2]:
-    #         subset = df_main[df_main['target'] == classe][feat]
-    #         plt.hist(subset, alpha=0.5, label=f'Classe {classe}', bins=30)
-    #     plt.legend()
-    #     plt.title(f'Distribution de {feat} par classe')
-    #     plt.show()
+        final_feats = [f for f in df_main.columns if f not in (DATE_COL, 'target', 'ret_future')]
     
     if debug_on:
         input("   [PAUSE] Vérifiez les features finales puis Entrée...")
@@ -357,7 +201,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     final_model = lstm_model_v2((full_seq, len(final_feats)), SEQUENCE_LENGTH, N_CLASSES)
     metrics = ['accuracy', F1Macro(3), BalancedAcc(3)]
 
-    gamma = 2.0
+    gamma = 5
     loss_fn = SparseCategoricalFocalLoss(gamma=gamma, class_weight=cw_f)
 
     final_model.compile(optimizer='adam',
@@ -373,7 +217,8 @@ def main(cross_validation, debug_on, feature_selection_on):
     final_model.fit(gen_train,
                     validation_data=gen_val,
                     epochs=EPOCHS,
-                    callbacks=[early_stop], verbose=1)
+                    callbacks=[early_stop], 
+                    verbose=1)
 
     if debug_on:
         input("   [PAUSE] Entraînement final OK. Entrée pour évaluation...")
@@ -435,10 +280,9 @@ def main(cross_validation, debug_on, feature_selection_on):
     # Je vous laisse la partie finale de sauvegarde telle quelle, avec les prints / input déjà présents.
 
 if __name__ == "__main__":
-    cross_validation = False  # False pour pipeline complet sans CV
     debug_on = False
 
-    feature_selection_on = True # True avec feature selection, False sans
+    feature_selection_on = False # True avec feature selection, False sans
 
     ECART_MIN = 0.05
 
@@ -447,4 +291,4 @@ if __name__ == "__main__":
         print("⚠️  Le modèle existe déjà :", f"model_v{MODEL_VERSION}.keras")
         input("   Appuyez sur Entrée pour continuer ou Ctrl+C pour annuler...")
 
-    main(cross_validation, debug_on, feature_selection_on)
+    main(debug_on, feature_selection_on)

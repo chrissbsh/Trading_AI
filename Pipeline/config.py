@@ -25,14 +25,16 @@ HOLDOUT_START_DATE = "2023-01-03"
 HOLDOUT_END_DATE = "2025-04-14"
 
 # ─────────────────── MODEL TRAINING PARAMETERS ─────────────────── #
-EPOCHS = 100
+EPOCHS = 200
 BATCH_SIZE = 64
-PATIENCE = 20
+PATIENCE = 50
 LEARNING_RATE = 0.01
+N_TRIALS = 30 # Nombre d'essais Optuna
 
 # ───────────────────── OUTPUT PARAMETERS ────────────────────── #
 MODEL_SAVE_DIR = "Pipeline/model"
 PREDICTION_SAVE_DIR = "Pipeline/prediction"
+OPTUNA_DIR = "Pipeline/optuna_results"
 MODEL_VERSION = "2" # Example, can be incremented or passed as arg
 
 # ─────────────────── BACKTESTING PARAMETERS ──────────────────── #

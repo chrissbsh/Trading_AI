@@ -23,14 +23,14 @@ from focal_loss import SparseCategoricalFocalLoss
 
 # ==================== REPRODUCTIBILITÉ ====================
 
-# Fixer toutes les graines aléatoires
-SEED = 42
-random.seed(SEED)
-np.random.seed(SEED)
-tf.random.set_seed(SEED)
+# # Fixer toutes les graines aléatoires
+# SEED = 42
+# random.seed(SEED)
+# np.random.seed(SEED)
+# tf.random.set_seed(SEED)
 
-# Configuration TensorFlow pour la reproductibilité
-tf.config.experimental.enable_op_determinism()
+# # Configuration TensorFlow pour la reproductibilité
+# tf.config.experimental.enable_op_determinism()
 
 # Afficher plus de lignes et colonnes
 pd.set_option('display.max_rows', 500)
@@ -142,7 +142,7 @@ def main(cross_validation, debug_on, feature_selection_on):
                 # Sélection de features sur df_train uniquement
                 print("🔹 Sélection features SHAP...")
                 raw_features = select_top_features_shap(df_train, top_n=TOP_N_FEATURES, target_col="ret_future")
-                features = [f for f in raw_features if f not in ('target', 'ret_future')]
+                features = [f for f in raw_features if f not in (DATE_COL, 'target', 'ret_future')]
                 if 'SP500_historical_data_Close' not in features:
                     features.append('SP500_historical_data_Close')
                 print(f"   → features finales utilisées : {features}")
@@ -151,7 +151,7 @@ def main(cross_validation, debug_on, feature_selection_on):
                     input("   [PAUSE] Vérifiez features puis Entrée...")
 
             else:
-                features = [f for f in df_train.columns if f not in ('target', 'ret_future')]
+                features = [f for f in df_train.columns if f not in (DATE_COL, 'target', 'ret_future')]
 
             # Préparation X/y
             scaler = StandardScaler()
@@ -262,13 +262,13 @@ def main(cross_validation, debug_on, feature_selection_on):
         # -- Pipeline final sur holdout --
         print("\n🔹 Sélection finale des features sur tout df_main")
         raw_feats = select_top_features_shap(df_main, top_n=TOP_N_FEATURES, target_col="ret_future")
-        final_feats = [f for f in raw_feats if f not in ('target', 'ret_future')]
+        final_feats = [f for f in raw_feats if f not in (DATE_COL, 'target', 'ret_future')]
         if 'SP500_historical_data_Close' not in final_feats:
             final_feats.append('SP500_historical_data_Close')
         print("   → Features finales :", final_feats)
 
     else:
-        final_feats = [f for f in df_main.columns if f not in ('target', 'ret_future')]
+        final_feats = [f for f in df_main.columns if f not in (DATE_COL, 'target', 'ret_future')]
 
 
     # # Calculez la corrélation entre chaque feature et la target

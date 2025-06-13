@@ -33,7 +33,7 @@ def delete_unfilled(csv_file_path, output_file_path):
     ]
     df.drop(columns=columns_to_exclude, inplace=True)
 
-    # Supprimer les lignes contenant plus de 10% de NaN
+    # Supprimer les lignes contenant plus de 10% de NaN car ce sont des jours avec marché fermé
     df.dropna(thresh=len(df.columns) * 0.9, inplace=True)
 
     # Sauvegarder dans le fichier de sortie

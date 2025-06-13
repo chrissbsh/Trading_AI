@@ -435,7 +435,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     # Je vous laisse la partie finale de sauvegarde telle quelle, avec les prints / input déjà présents.
 
 if __name__ == "__main__":
-    cross_validation = False  # False pour pipeline complet sans CV
+    cross_validation = True  # False pour pipeline complet sans CV
     debug_on = False
 
     feature_selection_on = True # True avec feature selection, False sans
