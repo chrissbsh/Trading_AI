@@ -438,7 +438,7 @@ if __name__ == "__main__":
     cross_validation = False  # False pour pipeline complet sans CV
     debug_on = False
 
-    feature_selection_on = True # True avec feature selection, False sans
+    feature_selection_on = False # True avec feature selection, False sans
 
     ECART_MIN = 0.05
 

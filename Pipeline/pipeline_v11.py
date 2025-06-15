@@ -221,6 +221,7 @@ def main(debug_on, feature_selection_on, fine_tune_on=False):
 
         # Reconstruction du modèle final avec les meilleurs paramètres
         best = study.best_trial.params
+        
         final_model = Sequential()
         final_model.add(Input(shape=input_shape))
         final_model.add(Lambda(lambda z: z[:, :seq_len_keep, :], name="truncate_future"))
@@ -229,6 +230,7 @@ def main(debug_on, feature_selection_on, fine_tune_on=False):
         final_model.add(Dropout(best['dropout_rate']))
         final_model.add(Dense(32, activation='relu'))
         final_model.add(Dense(n_classes, activation='softmax'))
+
         loss_fn   = SparseCategoricalFocalLoss(gamma=best['gamma'])
         optimizer = tf.keras.optimizers.Adam(learning_rate=best['lr'])
         final_model.compile(optimizer=optimizer, loss=loss_fn, metrics=metrics)

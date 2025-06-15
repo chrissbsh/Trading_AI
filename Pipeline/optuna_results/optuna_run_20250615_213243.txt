@@ -1,0 +1,86 @@
+
+================================================================================
+===== DÉBUT DE L'OPTIMISATION POUR PRED_HORIZON = 1 =====
+================================================================================
+
+Trial 001 | f1_macro=0.3170 | params={'fixed_threshold': 0.006021101485514515, 'sequence_length': 37, 'lstm_units': 32, 'dense_units': 32, 'dropout_rate': 0.3815032535983619, 'l2_reg': 0.05161613252579107, 'lr': 0.003593592853495819, 'gamma': 3.7696890445498514}
+Trial 002 | f1_macro=0.3854 | params={'fixed_threshold': 0.005702601282271238, 'sequence_length': 12, 'lstm_units': 96, 'dense_units': 48, 'dropout_rate': 0.2926945745878627, 'l2_reg': 0.017319919608514703, 'lr': 0.0012204588444715279, 'gamma': 0.5915692306492368}
+Trial 003 | f1_macro=0.3975 | params={'fixed_threshold': 0.005007003797117327, 'sequence_length': 4, 'lstm_units': 64, 'dense_units': 48, 'dropout_rate': 0.22347964218230196, 'l2_reg': 0.0007015050508099138, 'lr': 0.009872941992144897, 'gamma': 0.9367320601230016}
+Trial 004 | f1_macro=0.3832 | params={'fixed_threshold': 0.00937766427709856, 'sequence_length': 39, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.43853193757756903, 'l2_reg': 0.0027732657499491514, 'lr': 0.0005679370685115807, 'gamma': 1.4913918860766997}
+Trial 005 | f1_macro=0.3702 | params={'fixed_threshold': 0.008067816071725228, 'sequence_length': 30, 'lstm_units': 128, 'dense_units': 64, 'dropout_rate': 0.29545098693950145, 'l2_reg': 0.000236448376122382, 'lr': 4.1791184543832574e-05, 'gamma': 4.025295089202265}
+Trial 006 | f1_macro=0.3578 | params={'fixed_threshold': 0.005278450389147743, 'sequence_length': 93, 'lstm_units': 96, 'dense_units': 48, 'dropout_rate': 0.4679495937200947, 'l2_reg': 0.00040191916606261715, 'lr': 0.0007686374860823744, 'gamma': 2.309187235536881}
+Trial 007 | f1_macro=0.4025 | params={'fixed_threshold': 0.007842960578611554, 'sequence_length': 108, 'lstm_units': 32, 'dense_units': 16, 'dropout_rate': 0.1635328934296158, 'l2_reg': 0.0005029601984126436, 'lr': 0.0008558873532558998, 'gamma': 2.517797948301609}
+Trial 008 | f1_macro=0.4159 | params={'fixed_threshold': 0.006953441217252224, 'sequence_length': 51, 'lstm_units': 96, 'dense_units': 16, 'dropout_rate': 0.36093167096220025, 'l2_reg': 0.04630685729867794, 'lr': 0.00362386759251928, 'gamma': 0.5931098442551399}
+Trial 009 | f1_macro=0.3263 | params={'fixed_threshold': 0.009815963674456831, 'sequence_length': 38, 'lstm_units': 32, 'dense_units': 48, 'dropout_rate': 0.26448263222825946, 'l2_reg': 0.0006168980478465479, 'lr': 4.9727486210963025e-05, 'gamma': 3.6570878640028357}
+Trial 010 | f1_macro=0.4434 | params={'fixed_threshold': 0.009038474288209926, 'sequence_length': 14, 'lstm_units': 128, 'dense_units': 16, 'dropout_rate': 0.3958662389469829, 'l2_reg': 0.021983635581246788, 'lr': 0.0027319024289498913, 'gamma': 0.9679796369887168}
+Trial 011 | f1_macro=0.3554 | params={'fixed_threshold': 0.008821461775917657, 'sequence_length': 73, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.10051022005029692, 'l2_reg': 0.008524092921359059, 'lr': 0.0001605052128050627, 'gamma': 4.9920375639705}
+Trial 012 | f1_macro=0.3276 | params={'fixed_threshold': 0.007051720135374164, 'sequence_length': 68, 'lstm_units': 128, 'dense_units': 16, 'dropout_rate': 0.37429209586627143, 'l2_reg': 0.0799137529651525, 'lr': 0.0045155109304290935, 'gamma': 1.5863104875755905}
+Trial 013 | f1_macro=0.4055 | params={'fixed_threshold': 0.006826368381562574, 'sequence_length': 56, 'lstm_units': 96, 'dense_units': 16, 'dropout_rate': 0.3686989129837761, 'l2_reg': 0.022198089968365517, 'lr': 0.002607941531010072, 'gamma': 1.3960050874274317}
+Trial 014 | f1_macro=0.2390 | params={'fixed_threshold': 0.008582063178941429, 'sequence_length': 21, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.4102562632368726, 'l2_reg': 0.0036382601307510466, 'lr': 0.00021027502625014166, 'gamma': 0.543701855178568}
+Trial 015 | f1_macro=0.2635 | params={'fixed_threshold': 0.00660430417465004, 'sequence_length': 57, 'lstm_units': 96, 'dense_units': 16, 'dropout_rate': 0.48997965907125923, 'l2_reg': 0.025443853857026886, 'lr': 0.007198925062888434, 'gamma': 2.0064357454669643}
+Trial 016 | f1_macro=0.3197 | params={'fixed_threshold': 0.007430819703816782, 'sequence_length': 83, 'lstm_units': 64, 'dense_units': 16, 'dropout_rate': 0.35018823750389627, 'l2_reg': 0.09845989001050649, 'lr': 1.1362402156145776e-05, 'gamma': 2.9053204714817804}
+Trial 017 | f1_macro=0.4563 | params={'fixed_threshold': 0.008591059078901588, 'sequence_length': 50, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.34307366064844663, 'l2_reg': 0.006360604169982587, 'lr': 0.0020408946586770397, 'gamma': 1.1416863693512953}
+Trial 018 | f1_macro=0.4379 | params={'fixed_threshold': 0.009010414782066534, 'sequence_length': 2, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.24097599940596645, 'l2_reg': 0.0058965719149827655, 'lr': 0.0019073294429845728, 'gamma': 1.2104922642003073}
+Trial 019 | f1_macro=0.3991 | params={'fixed_threshold': 0.008364388978207236, 'sequence_length': 26, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.4298504461133599, 'l2_reg': 0.0018917037424821417, 'lr': 0.0003426420998520169, 'gamma': 3.1101294846217797}
+Trial 020 | f1_macro=0.4366 | params={'fixed_threshold': 0.00977653590409419, 'sequence_length': 114, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.3322792471138881, 'l2_reg': 0.012372152885090077, 'lr': 0.0016580426115137517, 'gamma': 1.9366020874262908}
+Trial 021 | f1_macro=0.4330 | params={'fixed_threshold': 0.00942842811309067, 'sequence_length': 46, 'lstm_units': 96, 'dense_units': 16, 'dropout_rate': 0.31769935225866247, 'l2_reg': 0.0017138161648751608, 'lr': 0.00034099711786548365, 'gamma': 0.9831477194426849}
+Trial 022 | f1_macro=0.4019 | params={'fixed_threshold': 0.00893015236847975, 'sequence_length': 3, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.22449906608587794, 'l2_reg': 0.006350278273423074, 'lr': 0.0018769068192851822, 'gamma': 1.1255202145875356}
+Trial 023 | f1_macro=0.4494 | params={'fixed_threshold': 0.009263578824708294, 'sequence_length': 17, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.2552453982199997, 'l2_reg': 0.005175362557669421, 'lr': 0.0014477983155871403, 'gamma': 2.0054918238629176}
+Trial 024 | f1_macro=0.4328 | params={'fixed_threshold': 0.009447549211214814, 'sequence_length': 18, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.1675950443182096, 'l2_reg': 0.010997640208583652, 'lr': 0.005191343504724704, 'gamma': 1.888594671578049}
+Trial 025 | f1_macro=0.4106 | params={'fixed_threshold': 0.008318206001883894, 'sequence_length': 30, 'lstm_units': 128, 'dense_units': 48, 'dropout_rate': 0.41017906835870493, 'l2_reg': 0.004602786391757236, 'lr': 0.0011620787682599873, 'gamma': 1.707482080195601}
+Trial 026 | f1_macro=0.4052 | params={'fixed_threshold': 0.009132280318484664, 'sequence_length': 11, 'lstm_units': 96, 'dense_units': 32, 'dropout_rate': 0.27896137672570565, 'l2_reg': 0.0011154788402022895, 'lr': 0.0005072295377079312, 'gamma': 2.157548425066952}
+Trial 027 | f1_macro=0.2917 | params={'fixed_threshold': 0.007705484792356368, 'sequence_length': 17, 'lstm_units': 128, 'dense_units': 16, 'dropout_rate': 0.32486233686829014, 'l2_reg': 0.028170461860253633, 'lr': 0.0030833697405430113, 'gamma': 2.6619748200947475}
+Trial 028 | f1_macro=0.3578 | params={'fixed_threshold': 0.008600703940206783, 'sequence_length': 44, 'lstm_units': 96, 'dense_units': 32, 'dropout_rate': 0.18602024886456486, 'l2_reg': 0.013656743235063763, 'lr': 0.00014508540985512812, 'gamma': 0.8777957745106526}
+Trial 029 | f1_macro=0.4622 | params={'fixed_threshold': 0.009966649027241831, 'sequence_length': 69, 'lstm_units': 128, 'dense_units': 48, 'dropout_rate': 0.26083752079808264, 'l2_reg': 0.0021322141082994713, 'lr': 0.005866739868040119, 'gamma': 1.2712423655654286}
+Trial 030 | f1_macro=0.4485 | params={'fixed_threshold': 0.009973276655399932, 'sequence_length': 69, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.2533573843192264, 'l2_reg': 0.00012808034085032803, 'lr': 0.009465970116263546, 'gamma': 1.3144631615097668}
+Trial 031 | f1_macro=0.3926 | params={'fixed_threshold': 0.009617748199039626, 'sequence_length': 84, 'lstm_units': 128, 'dense_units': 48, 'dropout_rate': 0.19757070779677816, 'l2_reg': 0.0025819086137775123, 'lr': 0.0010322027007427263, 'gamma': 1.6994425265440563}
+Trial 032 | f1_macro=0.4199 | params={'fixed_threshold': 0.009916414253104194, 'sequence_length': 65, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.2619161020505452, 'l2_reg': 0.00011862195257940658, 'lr': 0.009939255148818155, 'gamma': 1.3468358128140947}
+Trial 033 | f1_macro=0.4662 | params={'fixed_threshold': 0.00999893200736766, 'sequence_length': 74, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.24477669909722605, 'l2_reg': 0.00011802164230847636, 'lr': 0.006113431419198588, 'gamma': 1.30025071363048}
+Trial 034 | f1_macro=0.3836 | params={'fixed_threshold': 0.009301246063969794, 'sequence_length': 76, 'lstm_units': 32, 'dense_units': 48, 'dropout_rate': 0.3065639454442064, 'l2_reg': 0.0010689567031053223, 'lr': 0.005188799164223939, 'gamma': 2.33867411528521}
+Trial 035 | f1_macro=0.4514 | params={'fixed_threshold': 0.009610801950778501, 'sequence_length': 98, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.21889347991038588, 'l2_reg': 0.0002610045451707678, 'lr': 0.006170786685970376, 'gamma': 1.7891467792559712}
+Trial 036 | f1_macro=0.3756 | params={'fixed_threshold': 0.009669275298159504, 'sequence_length': 98, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.2152106642986023, 'l2_reg': 0.00019717557798685755, 'lr': 0.006509464615937057, 'gamma': 0.7240431013438346}
+Trial 037 | f1_macro=0.4326 | params={'fixed_threshold': 0.009979462121590102, 'sequence_length': 100, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.1469706654452239, 'l2_reg': 0.00023872912962732715, 'lr': 0.0038194679357213355, 'gamma': 1.6889342765837032}
+Trial 038 | f1_macro=0.4418 | params={'fixed_threshold': 0.009567839512836577, 'sequence_length': 87, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.2902728878834474, 'l2_reg': 0.0003321690378095741, 'lr': 0.006529455979920306, 'gamma': 1.1418827539009535}
+Trial 039 | f1_macro=0.4135 | params={'fixed_threshold': 0.005979251397689698, 'sequence_length': 78, 'lstm_units': 32, 'dense_units': 64, 'dropout_rate': 0.22917113468689318, 'l2_reg': 0.00019693744369512982, 'lr': 0.002413059372347865, 'gamma': 0.8140258231539446}
+Trial 040 | f1_macro=0.4152 | params={'fixed_threshold': 0.008157879068776432, 'sequence_length': 60, 'lstm_units': 64, 'dense_units': 48, 'dropout_rate': 0.34475988035160565, 'l2_reg': 0.0003424451251871935, 'lr': 0.00422447776061338, 'gamma': 1.5460240599703492}
+Trial 041 | f1_macro=0.4481 | params={'fixed_threshold': 0.009627585458107426, 'sequence_length': 92, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.19859097794078015, 'l2_reg': 0.0008630143289351832, 'lr': 0.00758351259228287, 'gamma': 3.480858291747412}
+Trial 042 | f1_macro=0.3722 | params={'fixed_threshold': 0.009242242922103343, 'sequence_length': 120, 'lstm_units': 96, 'dense_units': 48, 'dropout_rate': 0.2787062315591774, 'l2_reg': 0.0001094301766035447, 'lr': 0.0016015759883584054, 'gamma': 2.1612970359671744}
+Trial 043 | f1_macro=0.4180 | params={'fixed_threshold': 0.008767691520642298, 'sequence_length': 50, 'lstm_units': 64, 'dense_units': 48, 'dropout_rate': 0.2401280260641357, 'l2_reg': 0.002122668882665877, 'lr': 0.0031573826801174557, 'gamma': 1.8611475808424998}
+Trial 044 | f1_macro=0.3371 | params={'fixed_threshold': 0.009282268766084222, 'sequence_length': 106, 'lstm_units': 32, 'dense_units': 64, 'dropout_rate': 0.30124406346020843, 'l2_reg': 0.008080350488955683, 'lr': 0.0006781193631140844, 'gamma': 1.4092223689327588}
+Trial 045 | f1_macro=0.4472 | params={'fixed_threshold': 0.009746884648571031, 'sequence_length': 32, 'lstm_units': 96, 'dense_units': 48, 'dropout_rate': 0.26165996760113663, 'l2_reg': 0.004036606756053945, 'lr': 0.0014190947041417179, 'gamma': 2.391913209275899}
+Trial 046 | f1_macro=0.4368 | params={'fixed_threshold': 0.009430713283896918, 'sequence_length': 91, 'lstm_units': 128, 'dense_units': 32, 'dropout_rate': 0.14314002511008814, 'l2_reg': 0.000572674587883567, 'lr': 0.0024127589086971185, 'gamma': 4.593521890544224}
+Trial 047 | f1_macro=0.4331 | params={'fixed_threshold': 0.008673990511020841, 'sequence_length': 65, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.21006285399306668, 'l2_reg': 0.00014713015127185828, 'lr': 0.005499816682720305, 'gamma': 1.0450669645337156}
+Trial 048 | f1_macro=0.4520 | params={'fixed_threshold': 0.009151746997628763, 'sequence_length': 79, 'lstm_units': 128, 'dense_units': 64, 'dropout_rate': 0.27617298958572184, 'l2_reg': 0.0013230550256636549, 'lr': 0.004036804945194109, 'gamma': 2.113239373191572}
+Trial 049 | f1_macro=0.4397 | params={'fixed_threshold': 0.009012062030152472, 'sequence_length': 80, 'lstm_units': 96, 'dense_units': 64, 'dropout_rate': 0.2867068192455283, 'l2_reg': 0.0012996342229830576, 'lr': 0.004036695275922035, 'gamma': 0.6945622372685545}
+Trial 050 | f1_macro=0.3639 | params={'fixed_threshold': 0.009996039768229362, 'sequence_length': 75, 'lstm_units': 128, 'dense_units': 64, 'dropout_rate': 0.23854306940906989, 'l2_reg': 0.0029809339880139682, 'lr': 6.843148450398344e-05, 'gamma': 1.529849270681137}
+
+------------------------------
+RÉSUMÉ FINAL POUR PRED_HORIZON = 1
+------------------------------
+Meilleur F1-Macro (validation): 0.4662
+Meilleurs hyperparamètres: {'fixed_threshold': 0.00999893200736766, 'sequence_length': 74, 'lstm_units': 64, 'dense_units': 64, 'dropout_rate': 0.24477669909722605, 'l2_reg': 0.00011802164230847636, 'lr': 0.006113431419198588, 'gamma': 1.30025071363048}
+
+--- RÉSULTATS SUR L'ENSEMBLE DE TEST (HOLDOUT) ---
+Accuracy: 0.7018
+Balanced Accuracy: 0.3815
+F1-Macro: 0.3865
+F1-Weighted: 0.6836
+
+Rapport de classification:
+              precision    recall  f1-score   support
+
+           0      0.111     0.098     0.104        51
+           1      0.807     0.866     0.835       381
+           2      0.282     0.180     0.220        61
+
+    accuracy                          0.702       493
+   macro avg      0.400     0.382     0.387       493
+weighted avg      0.670     0.702     0.684       493
+
+
+Matrice de confusion:
+[[  5  37   9]
+ [ 32 330  19]
+ [  8  42  11]]
+
+================================================================================
