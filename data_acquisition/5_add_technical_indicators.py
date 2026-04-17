@@ -1,14 +1,32 @@
 import pandas as pd
-import numpy as np
-from ta import add_all_ta_features
 from ta.trend import IchimokuIndicator, PSARIndicator, ADXIndicator
 from ta.volatility import BollingerBands, AverageTrueRange
 from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.volume import VolumeWeightedAveragePrice, OnBalanceVolumeIndicator
-import uuid
+
+"""
+Ce script enrichit le fichier de données `consolidated_data_filtered.csv` avec un ensemble complet 
+d’indicateurs techniques financiers classiques et personnalisés, afin de générer un dataset final nommé `complete_data.csv`.
+
+Fonctionnalités principales :
+- Chargement des prix historiques du S&P500 (Open, High, Low, Close, Volume) et d’autres indicateurs macroéconomiques (or, dollar, taux).
+- Calcul d’indicateurs techniques classiques :
+  - Tendances : moyennes mobiles (SMA/EMA), MACD, Ichimoku, PSAR, ADX
+  - Volatilité : Bollinger Bands, ATR, historique de volatilité
+  - Momentum : RSI, Stochastic Oscillator
+  - Volume : VWAP, OBV, Accumulation/Distribution
+  - Niveaux de Fibonacci dynamiques (rolling window)
+- Ajout d’indicateurs dérivés spécifiques :
+  - Ratios SP500 / Or, Dollar, Taux US 10Y
+  - Direction et tension du VIX
+- Nettoyage final avec suppression des colonnes temporaires (OHLC, Range).
+
+Ce fichier est utilisé pour construire une matrice d’apprentissage riche destinée à l’entraînement de modèles de prédiction financière.
+"""
 
 directory = 'csv_data/consolidated_data/'
 
+# Charger les données
 def load_data(file_path):
     df = pd.read_csv(file_path, parse_dates=['Date'])
     df.set_index('Date', inplace=True)
@@ -19,6 +37,7 @@ def load_data(file_path):
     df['Volume'] = df["SP500_historical_data_Volume"]
     return df
 
+# Calcul des niveau de Fibonacci
 def calculate_fibonacci_levels(df, window=20):
     fib_levels = [0, 0.236, 0.382, 0.5, 0.618, 1.0]
     df['Fib_High'] = df['Close'].rolling(window=window).max()
@@ -30,6 +49,7 @@ def calculate_fibonacci_levels(df, window=20):
 
     return df
 
+# Calcul de différents indicteurs techniques
 def calculate_indicators(df):
     # Basique
     df['sp500_prev_close'] = df['SP500_historical_data_Close'].shift(1)
@@ -38,6 +58,8 @@ def calculate_indicators(df):
     # Ajout des indicateurs personnalisés
     df['std_21'] = df['sp500_return_1d'].rolling(21).std()
     df['hv_30']  = df['sp500_return_1d'].rolling(30).std()
+
+    # Calcul de rapport x/SP500
     df['r_sp_gold'] = df['SP500_historical_data_Close'] / df['gold_historical_data_Close']
     df['r_sp_dxy'] = df['SP500_historical_data_Close'] / df['dollar_index_historical_data_Close']
     df['r_sp_bond'] = df['SP500_historical_data_Close'] / df['Market_yield_US_10_year_DGS10']
@@ -45,10 +67,6 @@ def calculate_indicators(df):
     vix = df['^VIX_historical_data_Close']
     df['vix_direction'] = vix.diff().fillna(0).gt(0).astype(int)
     df['vix_high'] = vix.gt(vix.rolling(63).median()).astype(int)
-
-    # non présent dans le fichier
-    if 'PMI' in df.columns:
-        df['macro_regime'] = (df['PMI'] > 50).astype(int)
 
     # Indicateurs classiques
     df['SMA_100'] = df['Close'].rolling(window=100).mean()

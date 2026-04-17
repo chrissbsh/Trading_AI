@@ -1,7 +1,23 @@
 import pandas as pd
 import os
 
-def delete_unfilled(csv_file_path, output_file_path):
+"""
+Ce script finalise le nettoyage du fichier `consolidated_data_periodic_filled.csv` en appliquant plusieurs opérations ciblées 
+afin d’obtenir un dataset filtré et exploitable pour la modélisation.
+
+Fonctionnalités principales :
+- Suppression des jours où le marché est fermé (valeurs manquantes sur le S&P500 ou trop de NaNs).
+- Remplissage (forward-fill) de certaines colonnes de transactions quotidiennes si elles existent.
+- Nettoyage des noms de colonnes (espaces en trop, caractères invisibles).
+- Suppression des colonnes jugées inutiles pour la prédiction (volume, dividendes, etc.), sauf exceptions explicites.
+- Export du fichier nettoyé vers `consolidated_data_filtered.csv`.
+
+Ce fichier est utilisé comme version finale prête pour l’entraînement des modèles.
+"""
+
+
+# Supprimer les jours où le marché est fermé, remplir certaines colonnes, supprimer colonnes inutiles
+def fill_delete_unfilled(csv_file_path, output_file_path):
     # Lire le fichier CSV
     df = pd.read_csv(csv_file_path)
 
@@ -46,4 +62,4 @@ if __name__ == "__main__":
     input_file = os.path.join(directory, 'consolidated_data_periodic_filled.csv')
     output_file = os.path.join(directory, 'consolidated_data_filtered.csv')
 
-    df = delete_unfilled(input_file, output_file)
+    df = fill_delete_unfilled(input_file, output_file)

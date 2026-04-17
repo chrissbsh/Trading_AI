@@ -1,6 +1,25 @@
 import pandas as pd
 import numpy as np
 
+"""
+Ce script détecte automatiquement les colonnes contenant des données **périodiques** dans un fichier CSV 
+(`consolidated_data.csv`) en analysant l’espacement des dates non nulles. Il distingue :
+
+- Les **colonnes quotidiennes** (avec des données presque tous les jours),
+- Les **colonnes périodiques** (publiées avec un délai supérieur à un seuil défini, ex. indicateurs mensuels).
+
+Il remplit ensuite les valeurs manquantes des colonnes périodiques par propagation de la dernière valeur connue (méthode `ffill`),
+afin d’avoir un dataset complet utilisable pour des modèles temporels.
+
+Fonctionnalités principales :
+- Détection automatique du type de fréquence par colonne numérique,
+- Exclusion manuelle de certaines colonnes du traitement si nécessaire,
+- Génération d’un nouveau fichier CSV enrichi : `consolidated_data_periodic_filled.csv`.
+
+Ce fichier est utilisé pour prétraiter les données économiques en vue d’un apprentissage séquentiel (ex. LSTM).
+"""
+
+# Détecter les données périodiques
 def detect_periodic_columns(csv_file, date_column='Date', threshold=2):
     df = pd.read_csv(csv_file)
     df[date_column] = pd.to_datetime(df[date_column])
@@ -32,6 +51,7 @@ def detect_periodic_columns(csv_file, date_column='Date', threshold=2):
     
     return df, daily_columns, periodic_columns
 
+# Compléter les lignes manquantes pour les données périodiques (copie la dernière valeur jusqu'à changement)
 def fill_periodic_values(df, periodic_columns, date_column='Date'):
     # On trie d'abord par date pour que le ffill fonctionne correctement
     df = df.sort_values(date_column)
@@ -40,7 +60,7 @@ def fill_periodic_values(df, periodic_columns, date_column='Date'):
     df[periodic_columns] = df[periodic_columns].ffill()
     return df
 
-# Exemple d'utilisation
+
 if __name__ == "__main__":
     directory = 'csv_data/consolidated_data/'
     csv_file_path = directory + 'consolidated_data.csv'

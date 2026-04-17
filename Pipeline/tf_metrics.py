@@ -1,7 +1,14 @@
 import tensorflow as tf
 EPS = tf.keras.backend.epsilon()
 
-print("tf version: ", tf.__version__)
+"""
+Ce fichier définit deux métriques personnalisées pour TensorFlow/Keras :
+- `F1Macro` : calcule le F1-score macro pour un problème de classification multi-classes.
+- `BalancedAcc` : calcule la balanced accuracy (rappel moyen par classe), utile en cas de classes déséquilibrées.
+
+Ces métriques sont utilisées pendant l'entraînement et l'évaluation de modèles pour mieux refléter la performance globale, notamment lorsque l’accuracy simple est trompeuse.
+"""
+
 
 class F1Macro(tf.keras.metrics.Metric):
     def __init__(self, num_classes=3, name="f1_macro", **kwargs):

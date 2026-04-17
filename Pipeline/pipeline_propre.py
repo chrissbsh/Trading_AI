@@ -1,11 +1,12 @@
+import os
+import sys
 import pandas as pd
 import numpy as np
-from config import *
-import os
+from pipeline.config import *
 import random
 import tensorflow as tf
 
-from feature_selection import select_top_features_pca, select_top_features_shap
+from pipeline.feature_selection import select_top_features_pca, select_top_features_shap
 
 from tensorflow.keras.models import Sequential # type: ignore
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Lambda # type: ignore
@@ -17,25 +18,45 @@ from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, f1_score, balanced_accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
-from tf_metrics import *
+from pipeline.tf_metrics import *
 
 from focal_loss import SparseCategoricalFocalLoss
 
+"""
+Ce script constitue le pipeline complet d'entraînement et d'évaluation d'un modèle LSTM 
+pour la classification du S&P500 en 3 classes (baisse, neutre, hausse) à partir de données temporelles enrichies.
+
+Fonctionnalités principales :
+1. Chargement, nettoyage et séparation temporelle des données (train, validation, holdout).
+2. Création de la target via le rendement futur à un horizon défini (`ret_future`) et labellisation par seuils.
+3. Option de sélection de features via SHAP (importance sur LightGBM).
+4. Préparation des séquences temporelles avec `TimeseriesGenerator`.
+5. Entraînement du modèle LSTM (avec Focal Loss pondérée) sur des séquences glissantes.
+6. Option de validation croisée temporelle avec reporting détaillé (accuracy, f1, balanced acc).
+7. Évaluation finale sur l’ensemble holdout avec seuil de confiance ajustable (`ECART_MIN`).
+8. Impression des métriques, des prédictions par classe, et des dates de fenêtre de prédiction.
+
+Ce pipeline permet de tester de manière robuste des modèles séquentiels pour la prévision de mouvement de marché 
+en tenant compte de la temporalité, des déséquilibres de classe, et d’une logique de confiance dans la décision.
+"""
+
+
 # ==================== REPRODUCTIBILITÉ ====================
 
-# # Fixer toutes les graines aléatoires
-# SEED = 42
-# random.seed(SEED)
-# np.random.seed(SEED)
-# tf.random.set_seed(SEED)
+# Fixer toutes les graines aléatoires
+SEED = 42
+random.seed(SEED)
+np.random.seed(SEED)
+tf.random.set_seed(SEED)
 
-# # Configuration TensorFlow pour la reproductibilité
-# tf.config.experimental.enable_op_determinism()
+# Configuration TensorFlow pour la reproductibilité
+tf.config.experimental.enable_op_determinism()
 
 # Afficher plus de lignes et colonnes
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 100)
 
+# Définir l'architecture du modèle
 def lstm_model_v2(input_shape, seq_len_keep, n_classes):
     model = Sequential()
     model.add(Input(shape=input_shape))
@@ -48,6 +69,7 @@ def lstm_model_v2(input_shape, seq_len_keep, n_classes):
     model.add(Dense(n_classes, activation='softmax'))
     return model
 
+# Charger les données CSV
 def load_data(debug_on):
     print("🔹 1) Chargement des données depuis :", DATA_FILE_PATH)
     df = pd.read_csv(DATA_FILE_PATH, parse_dates=[DATE_COL])
@@ -59,6 +81,7 @@ def load_data(debug_on):
 
     return df
 
+# Créer la cible
 def create_target(df, tag="", debug_on=False):
     print(f"🔹 2) Création de la cible (horizon = {PRED_HORIZON}) {tag}")
     df['ret_future'] = (df[TARGET_PRICE_COL].shift(-PRED_HORIZON) - df[TARGET_PRICE_COL]) / df[TARGET_PRICE_COL]
@@ -92,9 +115,11 @@ def create_target(df, tag="", debug_on=False):
 
     return df
 
+# Fonction principale du pipeline (CV ou non, avec ou sans sélection de features, debug ou non)
 def main(cross_validation, debug_on, feature_selection_on):
     # -- Chargement et split --
     df_raw = load_data(debug_on)
+    # Supprimer certaines colonnes inutiles à la prédiction
     cols_to_drop = ["sp500_prev_close", "sp500_return_1d", "vix_direction", "vix_high"]
     df_raw.drop(columns=cols_to_drop, errors='ignore', inplace=True)
     print(f"🔹 Colonnes restantes : {df_raw.columns.tolist()}")
@@ -103,6 +128,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     if debug_on:
         input("   [PAUSE] Vérifiez le nettoyage initial puis Entrée...")
 
+    # Création des splits temporels (train vs holdout)
     df_holdout = df_raw[(df_raw[DATE_COL] >= HOLDOUT_START_DATE) & (df_raw[DATE_COL] <= HOLDOUT_END_DATE)].copy()
     df_main    = df_raw[df_raw[DATE_COL] < HOLDOUT_START_DATE].copy()
     print(f"🔹 Lignes pour entraînement (avant target) : {len(df_main)}")
@@ -125,6 +151,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     # -- Cross-validation ou pipeline complet --
     if cross_validation:
         print("🔹 Mode Validation Croisée activé")
+        # Initialisation de la validation croisée temporelle
         tscv = TimeSeriesSplit(n_splits=5)
         fold_stats = []
 
@@ -137,7 +164,8 @@ def main(cross_validation, debug_on, feature_selection_on):
             print(f"👉 Train: {len(df_train)}, Val: {len(df_val)}")
             if debug_on:
                 input("   [PAUSE] Vérifiez les indexes de split puis Entrée...")
-
+            
+            # Appliquer SHAP pour sélectionner les top N features (sur df_train)
             if feature_selection_on:
                 # Sélection de features sur df_train uniquement
                 print("🔹 Sélection features SHAP...")
@@ -166,10 +194,12 @@ def main(cross_validation, debug_on, feature_selection_on):
 
             # Générateurs
             full_seq = SEQUENCE_LENGTH + PRED_HORIZON
+            # Création des générateurs de séquences temporelles
             train_gen = TimeseriesGenerator(X_train, y_train, length=full_seq, batch_size=BATCH_SIZE)
             val_gen   = TimeseriesGenerator(X_val,   y_val,   length=full_seq, batch_size=BATCH_SIZE)
             print("🔹 Nombre de batches train/val :", len(train_gen), len(val_gen))
 
+            # Calcul des poids de classes (pour gérer déséquilibre)
             cw = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
 
             cw_dict = dict(enumerate(cw))
@@ -188,10 +218,8 @@ def main(cross_validation, debug_on, feature_selection_on):
             loss_fn = SparseCategoricalFocalLoss(gamma=gamma, class_weight=cw)
 
             model.compile(optimizer='adam',
-                        loss=loss_fn,          # cross-entropy ou focal loss maison
+                        loss=loss_fn,
                         metrics=metrics)
-            
-            # model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
             print("🔹 Modèle compilé. Architecture :")
             model.summary()
@@ -199,10 +227,7 @@ def main(cross_validation, debug_on, feature_selection_on):
             if debug_on:
                 input("   [PAUSE] Vérifiez l'architecture puis Entrée...")
 
-            # Entraînement
-            
-            # early = EarlyStopping(monitor='val_loss', patience=PATIENCE, restore_best_weights=True)
-            
+            # Entraînement avec early stopping basé sur F1 macro
             early_stop = EarlyStopping(
             monitor='val_f1_macro',   # ou 'val_balanced_accuracy'
             mode='max',
@@ -215,7 +240,7 @@ def main(cross_validation, debug_on, feature_selection_on):
             if debug_on:    
                 input("   [PAUSE] Entraînement terminé. ⇨ Entrée pour prédictions...")
 
-            # Prédiction
+           # Prédictions sur les données de validation
             y_proba = model.predict(val_gen)
             # On reconstruit y_true de la même façon que plus bas
             y_true = np.concatenate([val_gen[i][1] for i in range(len(val_gen))])
@@ -232,7 +257,7 @@ def main(cross_validation, debug_on, feature_selection_on):
             if debug_on:    
                 input("   [PAUSE] Vérifiez dates des fenêtres CV puis Entrée...")
 
-            # Seuil de confiance & y_pred
+            # Conversion des proba → classes avec logique de seuil de confiance
             ecart_min = ECART_MIN
             y_pred = []
             for p in y_proba:
@@ -240,7 +265,7 @@ def main(cross_validation, debug_on, feature_selection_on):
                 y_pred.append(np.argmax(p) if (top2[0]-top2[1]>=ecart_min) else 1)
             y_pred = np.array(y_pred)
 
-            # Scores
+            # Résumé des performances sur chaque fold
             acc     = accuracy_score(y_true, y_pred)
             bal_acc = balanced_accuracy_score(y_true, y_pred)
             f1_m    = f1_score(y_true, y_pred, average='macro')
@@ -258,6 +283,8 @@ def main(cross_validation, debug_on, feature_selection_on):
         
         input("   [PAUSE] Fin validation croisée. Entrée pour pipeline final...")
 
+
+    # Finalisation avec entraînement sur tout df_main (pipeline complet)
     if feature_selection_on:
         # -- Pipeline final sur holdout --
         print("\n🔹 Sélection finale des features sur tout df_main")
@@ -269,26 +296,6 @@ def main(cross_validation, debug_on, feature_selection_on):
 
     else:
         final_feats = [f for f in df_main.columns if f not in ('target', 'ret_future')]
-
-
-    # # Calculez la corrélation entre chaque feature et la target
-    # correlations = df_main[final_feats + ['target']].corr()['target'].abs().sort_values(ascending=False)
-    # print("Classement features les plus corrélées avec la target:")
-    # print(correlations.head(25))
-
-    # # Visualisez la séparabilité des classes
-    # import seaborn as sns
-    # import matplotlib.pyplot as plt
-
-    # # Pour les 3 meilleures features
-    # for feat in correlations.index[1:4]:  # Skip 'target' itself
-    #     plt.figure(figsize=(10, 6))
-    #     for classe in [0, 1, 2]:
-    #         subset = df_main[df_main['target'] == classe][feat]
-    #         plt.hist(subset, alpha=0.5, label=f'Classe {classe}', bins=30)
-    #     plt.legend()
-    #     plt.title(f'Distribution de {feat} par classe')
-    #     plt.show()
     
     if debug_on:
         input("   [PAUSE] Vérifiez les features finales puis Entrée...")
@@ -297,7 +304,6 @@ def main(cross_validation, debug_on, feature_selection_on):
     print("🔹 Division chronologique des données...")
 
     # Définir le point de séparation pour un split 80/20 sur df_main.
-    # C'est plus robuste que de calculer des tailles séparées.
     split_idx = int(0.8 * len(df_main))
 
     # Diviser df_main en ensembles d'entraînement et de validation
@@ -395,7 +401,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     if debug_on:    
         input("   [PAUSE] Vérifiez dates des fenêtres HoldOut puis Entrée...")
 
-    # Seuil confiance & y_pred_final
+    # Transformation probabilités → prédictions avec logique de confiance
     ecart_min = ECART_MIN
     y_pred_final_list = []
     for proba in proba_final:
@@ -406,7 +412,7 @@ def main(cross_validation, debug_on, feature_selection_on):
             y_pred_final_list.append(1) # Classe neutre par défaut pour incertitude (à adapter, 0, 1 ou 2)
     y_pred_final = np.array(y_pred_final_list)
 
-    # Scores finaux
+    # Calcul des métriques de classification
     acc_f  = accuracy_score(y_true_final, y_pred_final)
     bal_f  = balanced_accuracy_score(y_true_final, y_pred_final)
     f1m_f  = f1_score(y_true_final, y_pred_final, average='macro')
@@ -415,8 +421,8 @@ def main(cross_validation, debug_on, feature_selection_on):
     print(f"   → Balanced Acc. : {bal_f:.4f}")
     print(f"   → F1-macro      : {f1m_f:.4f}")
     print(f"   → F1-weighted      : {f1w_f:.4f}")
-    # print(classification_report(y_true_final, y_pred_final, zero_division=0))
-    # print(confusion_matrix(y_true_final, y_pred_final))
+    print(classification_report(y_true_final, y_pred_final, zero_division=0))
+    print(confusion_matrix(y_true_final, y_pred_final))
 
     print(f"Nombre de classe 0 prédite (y_pred_final): {(y_pred_final == 0).sum()}")
     print(f"Nombre de classe 0 réelle (y_true_final): {(y_true_final == 0).sum()}")
@@ -431,8 +437,6 @@ def main(cross_validation, debug_on, feature_selection_on):
     if debug_on:
         input("   [PAUSE] Vérifiez le rapport de classification puis Entrée...")
 
-    # ... (suite sauvegarde prédictions, modèle, affichages graphiques identiques)
-    # Je vous laisse la partie finale de sauvegarde telle quelle, avec les prints / input déjà présents.
 
 if __name__ == "__main__":
     cross_validation = False  # False pour pipeline complet sans CV

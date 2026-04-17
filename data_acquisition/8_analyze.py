@@ -1,7 +1,3 @@
-"""
-Analyse des données SP500 avec corrélations et classification multi-classes
-"""
-
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -16,6 +12,24 @@ warnings.filterwarnings('ignore')
 # Configuration matplotlib
 plt.style.use('default')
 sns.set_palette("husl")
+
+"""
+Ce fichier permet d’analyser les données du S&P500 via des approches de classification multi-classes,
+dans le but de tester différentes méthodes de découpage du rendement à 7 jours (`sp500_return_7d`).
+
+Deux stratégies sont proposées :
+- Une classification **manuelle** avec des seuils fixes prédéfinis,
+- Une classification **optimale** avec des seuils basés sur des quantiles équilibrés (k classes).
+
+Il permet également :
+- D’analyser statistiquement les rendements (distribution, quantiles),
+- De visualiser les corrélations entre les features et la target,
+- De sauvegarder les graphiques associés (heatmap, barplot, distribution).
+
+Ce fichier est utilisé pour explorer l'impact de différents choix de **seuils** (`thresholds`) et **k-quantiles**
+dans la création de cibles supervisées avant l'entraînement de modèles.
+"""
+
 
 # =============================================================================
 # 1. CHARGEMENT ET PRÉPARATION DES DONNÉES

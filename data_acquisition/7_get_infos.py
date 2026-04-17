@@ -1,6 +1,18 @@
 import pandas as pd
 import numpy as np
 
+"""
+Ce fichier a pour but d'explorer différentes combinaisons de paramètres `pred_horizon` (horizon de prédiction) et `threshold` (seuils de variation) dans le cadre d’une classification multi-classes du mouvement du S&P500.
+
+Il permet de :
+- Calculer les rendements à horizon glissant (`pred_horizon` jours),
+- Appliquer une transformation en classes basée sur des seuils personnalisés (`threshold`),
+- Étudier la distribution des classes générées et les corrélations avec les autres variables du jeu de données.
+
+Ce script est principalement utilisé comme outil d’analyse préliminaire pour tester rapidement l’impact des paramètres sur la qualité des cibles (`target_multi`) avant l'entraînement d’un modèle.
+"""
+
+
 # Charger le fichier
 file_path = 'csv_data/consolidated_data/normalized_complete_data.csv'
 df = pd.read_csv("csv_data/consolidated_data/normalized_complete_data.csv", parse_dates=["Date"]).sort_values("Date")
@@ -111,24 +123,24 @@ class_distribution = df['target_multi'].value_counts().sort_index()
 correlation_matrix = df.corr(numeric_only=True)
 top_corr_features = correlation_matrix["sp500_return_7d"].abs().sort_values(ascending=False).head(20)
 
-# # 5. Visualisation heatmap
-# import matplotlib.pyplot as plt
-# import seaborn as sns
+# 5. Visualisation heatmap
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-# # Heatmap globale
-# plt.figure(figsize=(12, 10))
-# sns.heatmap(correlation_matrix, cmap='coolwarm', center=0)
-# plt.title("Heatmap complète des corrélations")
-# heatmap_path = "/mnt/data/full_correlation_heatmap.png"
-# plt.tight_layout()
-# plt.savefig(heatmap_path)
-# plt.close()
+# Heatmap globale
+plt.figure(figsize=(12, 10))
+sns.heatmap(correlation_matrix, cmap='coolwarm', center=0)
+plt.title("Heatmap complète des corrélations")
+heatmap_path = "/mnt/data/full_correlation_heatmap.png"
+plt.tight_layout()
+plt.savefig(heatmap_path)
+plt.close()
 
-# # Corrélations avec la target uniquement
-# plt.figure(figsize=(8, 6))
-# top_corr = df[top_corr_features.index].corrwith(df['sp500_return_7d']).sort_values()
-# top_corr.plot(kind='barh', title="Corrélation avec sp500_return_7d")
-# corr_target_path = "/mnt/data/correlation_with_target.png"
-# plt.tight_layout()
-# plt.savefig(corr_target_path)
-# plt.close()
+# Corrélations avec la target uniquement
+plt.figure(figsize=(8, 6))
+top_corr = df[top_corr_features.index].corrwith(df['sp500_return_7d']).sort_values()
+top_corr.plot(kind='barh', title="Corrélation avec sp500_return_7d")
+corr_target_path = "/mnt/data/correlation_with_target.png"
+plt.tight_layout()
+plt.savefig(corr_target_path)
+plt.close()

@@ -2,6 +2,22 @@ import os
 import glob
 import pandas as pd
 
+"""
+Ce script a pour but de parser, nettoyer et consolider automatiquement plusieurs fichiers CSV d’indicateurs économiques 
+présents dans un dossier (`csv_data/indicators`) en un seul fichier unifié (`consolidated_data.csv`).
+
+Fonctionnalités principales :
+- Recherche automatique de la colonne contenant la date (ex. "Date", "Observation", "Peak", etc.).
+- Conversion des dates au format `YYYY-MM-DD` (niveau jour uniquement).
+- Nettoyage des colonnes non numériques et agrégation par moyenne en cas de doublons sur une même date.
+- Détection et levée d'erreur en cas de conflits de valeurs entre fichiers pour une même date et colonne.
+- Fusion intelligente des fichiers CSV dans un DataFrame final avec des noms de colonnes préfixés par le nom du fichier source.
+- Export du fichier fusionné dans `csv_data/consolidated_data/consolidated_data.csv`, filtré à partir de l’année 2000.
+
+Ce script est utilisé pour constituer un dataset homogène à partir de sources hétérogènes avant entraînement de modèles prédictifs.
+"""
+
+
 def parse_csv(file_path):
     df = pd.read_csv(file_path)
 
@@ -34,6 +50,7 @@ def parse_csv(file_path):
 
     return df
 
+# récuperer tous les csv présent dans un dossier
 def combine_csvs(folder_path, pattern="*.csv"):
     file_paths = glob.glob(os.path.join(folder_path, pattern))
     if not file_paths:

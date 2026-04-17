@@ -1,5 +1,10 @@
 csv_data/
-archives/
 images/
 indicator_list/
-Avancement/
+report/
+old_predictions/
+bibliographie/
+
+__pycache__/
+*.pyc
+.vscode/

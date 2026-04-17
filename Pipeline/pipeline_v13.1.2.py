@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from config import * 
+from pipeline.config import * 
 import os
 import random
 import optuna
@@ -16,7 +16,7 @@ warnings.filterwarnings('ignore', category=UserWarning)
 import tensorflow as tf
 tf.get_logger().setLevel('ERROR')            # supprime les dépréciations tf.placeholder, NodeDef, etc.
 
-from feature_selection import select_top_features_pca, select_top_features_shap
+from pipeline.feature_selection import select_top_features_pca, select_top_features_shap
 
 from tensorflow.keras.models import Sequential # type: ignore
 from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Lambda # type: ignore
@@ -30,14 +30,24 @@ from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, f1_score, balanced_accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
-from tf_metrics import *
+from pipeline.tf_metrics import *
 
 from imblearn.over_sampling import RandomOverSampler
 
 from focal_loss import SparseCategoricalFocalLoss
 
+
+"""
+Ce fichier constitue le cœur de la pipeline d’optimisation de modèle LSTM pour prédire les mouvements du marché. 
+Il permet de tester différentes combinaisons d’hyperparamètres, en particulier pred_horizon (horizon de prédiction) 
+et fixed_threshold (seuil de variation), en utilisant Optuna pour le fine-tuning. 
+Il applique une sélection de features (SHAP ou PCA), un oversampling pour les classes minoritaires, et évalue le modèle sur un ensemble holdout. 
+Les prédictions et résultats sont automatiquement sauvegardés.
+"""
+
 # ==================== REPRODUCTIBILITÉ ====================
 
+# Définition d'une seed pour assurer la reproductibilité
 SEED = 123
 random.seed(SEED)
 np.random.seed(SEED)
@@ -47,21 +57,10 @@ tf.config.experimental.enable_op_determinism()
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 100)
 
-# gpus = tf.config.list_physical_devices('GPU')
-# if gpus:
-#     print("✅ GPU détecté :", gpus)
-#     try:
-#         # Alloue la mémoire GPU de façon progressive (pas tout d’un coup)
-#         for gpu in gpus:
-#             tf.config.experimental.set_memory_growth(gpu, True)
-#     except RuntimeError as e:
-#         print("Erreur de config GPU :", e)
-# else:
-#     print("❌ Aucun GPU détecté. L'entraînement se fera sur CPU.")
-
 tf.config.threading.set_intra_op_parallelism_threads(8)
 tf.config.threading.set_inter_op_parallelism_threads(4)
 
+# Fonctions pour parser les anciens résultats d'Optuna si on souhaite les réutiliser
 def parse_previous_trials(folder_path):
     print(folder_path)
     trials = []
@@ -93,7 +92,7 @@ def create_fixed_distributions(params):
             distributions[k] = optuna.distributions.FloatDistribution(v, v)
     return distributions
 
-
+# Charger les données
 def load_data(debug_on):
     print("🔹 1) Chargement des données depuis :", DATA_FILE_PATH)
     df = pd.read_csv(DATA_FILE_PATH, parse_dates=[DATE_COL])
@@ -103,6 +102,7 @@ def load_data(debug_on):
         input("   [PAUSE] Vérifiez le DataFrame chargé puis appuyez sur Entrée...")
     return df
 
+# Fonction de création de la variable cible (baisse / neutre / hausse)
 def create_target(df, pred_horizon, fixed_threshold, tag=""):
     print(f"🔹 2) Création de la cible (horizon = {pred_horizon}, seuil={fixed_threshold}) {tag}")
     df['ret_future'] = (df[TARGET_PRICE_COL].shift(-pred_horizon) - df[TARGET_PRICE_COL]) / df[TARGET_PRICE_COL]
@@ -119,7 +119,7 @@ def create_target(df, pred_horizon, fixed_threshold, tag=""):
     df["target"] = df["ret_future"].apply(label_target)
     return df
 
-
+# Fonction principale contenant la boucle d’optimisation sur différents horizons
 def main(debug_on, feature_selection_on, recup_past_trials):
     # -- Chargement et split initial --
     df_raw = load_data(debug_on)
@@ -158,8 +158,8 @@ def main(debug_on, feature_selection_on, recup_past_trials):
         print(f"🚀 Lancement de l'optimisation pour PRED_HORIZON = {current_pred_horizon}")
         print("="*80)
         
-        # --- Définition de la fonction Objective pour Optuna ---
-        # Elle est définie à l'intérieur de la boucle pour capturer `current_pred_horizon`
+        # Fonction objective à optimiser via Optuna
+        # Chaque trial teste une combinaison d’hyperparamètres
         def objective(trial):
             print(f"\n▶ Trial {trial.number+1}/{N_TRIALS} pour horizon={current_pred_horizon}")
             # ==================== 1. HYPERPARAMÈTRES À TESTER ====================
@@ -179,7 +179,8 @@ def main(debug_on, feature_selection_on, recup_past_trials):
 
             # ==================== 2. PRÉPARATION DES DONNÉES (DÉPENDANTE DU TRIAL) ====================
             df_main = create_target(df_main_raw.copy(), current_pred_horizon, fixed_threshold, tag="(train)")
-            
+
+            # Sélection des features les plus importantes
             if feature_selection_on:
                 raw_feats = select_top_features_shap(df_main, top_n=top_n_features, target_col="ret_future")
                 final_feats = [f for f in raw_feats if f not in (DATE_COL, 'target', 'ret_future')]
@@ -188,6 +189,7 @@ def main(debug_on, feature_selection_on, recup_past_trials):
             else:
                 final_feats = [f for f in df_main.columns if f not in (DATE_COL, 'target', 'ret_future')]
 
+            # Séparation temporelle et standardisation
             split_idx = int(0.8 * len(df_main))
             train_df = df_main.iloc[:split_idx]
             val_df = df_main.iloc[split_idx:]
@@ -207,7 +209,7 @@ def main(debug_on, feature_selection_on, recup_past_trials):
                 print("   → Skipping trial: not enough data for TimeseriesGenerator with current parameters.")
                 raise optuna.exceptions.TrialPruned()
             
-            # Oversampling
+            # Oversampling pour corriger le déséquilibre des classes
             X_seq_list, y_seq_list = [], []
             for i in range(len(gen_train)):
                 x, y = gen_train[i]
@@ -223,6 +225,7 @@ def main(debug_on, feature_selection_on, recup_past_trials):
             # ==================== 3. CONSTRUCTION ET ENTRAÎNEMENT DU MODÈLE ====================
             input_shape = (full_seq, len(final_feats))
             
+            # Architecture LSTM paramétrable
             model = Sequential([
                 Input(shape=input_shape),
                 Lambda(lambda z: z[:, :sequence_length, :], name="truncate_future"),
@@ -232,18 +235,22 @@ def main(debug_on, feature_selection_on, recup_past_trials):
                 Dense(N_CLASSES, activation='softmax')
             ])
 
+            # Calcul des class weight
             cw = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
 
+            # Fonction de perte : Focal loss
             loss_fn = SparseCategoricalFocalLoss(gamma=gamma, class_weight=cw)
+            # Compilation du modèle
             optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
             metrics = ['accuracy', F1Macro(N_CLASSES), BalancedAcc(N_CLASSES)]
             model.compile(optimizer=optimizer, loss=loss_fn, metrics=metrics)
-
+            # EarlyStopping sur F1-macro de validation
             early = EarlyStopping(monitor='val_f1_macro', mode='max', patience=PATIENCE, restore_best_weights=True)
-
+            # Entrainement
             model.fit(X_train_res, y_res, validation_data=gen_val, batch_size=BATCH_SIZE, epochs=EPOCHS, callbacks=[early], verbose=0)
             
             # ==================== 4. ÉVALUATION ====================
+            # Prédiction finale sur l’ensemble Holdout avec seuil de confiance
             proba_val = model.predict(gen_val, verbose=0)
             y_true_val = np.concatenate([gen_val[i][1] for i in range(len(gen_val))])
             proba_val = proba_val[:len(y_true_val)]
@@ -256,9 +263,11 @@ def main(debug_on, feature_selection_on, recup_past_trials):
                 else:
                     y_pred_val.append(1) # Classe neutre par défaut
             
+            # Calcul du score F1 à maximiser par Optuna
             score = f1_score(y_true_val, y_pred_val, average='macro', zero_division=0)
             print(f"✓ Trial {trial.number+1} → f1_macro = {score:.4f}")
 
+            # Ecriture des résultats
             with open(log_filename, "a") as f:
                 f.write(f"Trial {trial.number+1:03d} | f1_macro={score:.4f} | params={trial.params}\n")
             
@@ -285,9 +294,10 @@ def main(debug_on, feature_selection_on, recup_past_trials):
 
             input("entrer pour continuer")
 
-
+        # Lancement de l'optimisation avec Optuna (cherche les meilleurs hyperparamètres)
         study.optimize(objective, n_trials=N_TRIALS)
-        
+
+        # Récupération des meilleurs paramètres et score associés    
         best = study.best_trial.params
         best_value = study.best_value
         
@@ -295,7 +305,7 @@ def main(debug_on, feature_selection_on, recup_past_trials):
         print(best)
         print(f"   avec un F1-macro de validation de: {best_value:.4f}")
 
-        # ==================== ENTRAÎNEMENT FINAL ET ÉVALUATION HOLDOUT POUR CET HORIZON ====================
+        # ==================== Entraînement final du modèle avec les meilleurs hyperparamètres ====================
         print("\n--- Entraînement du modèle final et évaluation sur le Holdout ---")
         
         # 1. Préparation des données avec les meilleurs hyperparamètres
@@ -316,22 +326,25 @@ def main(debug_on, feature_selection_on, recup_past_trials):
         else:
             final_feats = [f for f in df_main_final.columns if f not in (DATE_COL, 'target', 'ret_future')]
 
+        # Extraction des features et cibles pour le train, val et test
         X_train_final, y_train_final = train_df_final[final_feats], train_df_final['target'].to_numpy()
         X_val_final, y_val_final = val_df_final[final_feats], val_df_final['target'].to_numpy()
         X_test_final, y_test_final = test_df_final[final_feats], test_df_final['target'].to_numpy()
         date_test = test_df_final[DATE_COL].values
 
+        # Normalisation des données
         scaler = StandardScaler()
         X_train_scaled_final = scaler.fit_transform(X_train_final)
         X_val_scaled_final = scaler.transform(X_val_final)
         X_test_scaled_final = scaler.transform(X_test_final)
         
+        # Génération des séquences temporelles pour LSTM
         full_seq = best['sequence_length'] + current_pred_horizon - 1
         gen_train_final = TimeseriesGenerator(X_train_scaled_final, y_train_final, length=full_seq, batch_size=BATCH_SIZE)
         gen_val_final = TimeseriesGenerator(X_val_scaled_final, y_val_final, length=full_seq, batch_size=BATCH_SIZE)
         gen_test_final = TimeseriesGenerator(X_test_scaled_final, y_test_final, length=full_seq, batch_size=BATCH_SIZE)
 
-        # Oversampling sur l'ensemble d'entraînement final uniquement
+        # Oversampling sur l'ensemble d'entraînement final uniquement pour corriger le déséquilibre des classes
         X_seq_list, y_seq_list = [], []
         for i in range(len(gen_train_final)):
             x, y = gen_train_final[i]
@@ -343,7 +356,7 @@ def main(debug_on, feature_selection_on, recup_past_trials):
         X_res_flat, y_res = ros.fit_resample(X_flat, y_seqs)
         X_train_res_final = X_res_flat.reshape(-1, seq_len, n_features)
         
-        # 2. Construction du modèle final
+        # Construction du modèle LSTM final avec les meilleurs hyperparamètres
         input_shape = (full_seq, len(final_feats))
         
         final_model = Sequential([
@@ -355,6 +368,7 @@ def main(debug_on, feature_selection_on, recup_past_trials):
             Dense(N_CLASSES, activation='softmax')
         ])
 
+        # Calcul des poids de classes + définition de la loss (focal loss pondérée) + compilation du modèle
         cw_f = compute_class_weight('balanced', classes=np.unique(y_train_final), y=y_train_final)
 
         loss_fn = SparseCategoricalFocalLoss(gamma=best['gamma'], class_weight=cw_f)
@@ -362,7 +376,7 @@ def main(debug_on, feature_selection_on, recup_past_trials):
         metrics = ['accuracy', F1Macro(N_CLASSES), BalancedAcc(N_CLASSES)]
         final_model.compile(optimizer=optimizer, loss=loss_fn, metrics=metrics)
         
-        # --- MODIFIÉ: EarlyStopping sur l'ensemble de validation ---
+        # Early stopping sur le meilleur score de F1-macro en validation
         early_stop_final = EarlyStopping(
             monitor='val_f1_macro', 
             mode='max',
@@ -370,7 +384,7 @@ def main(debug_on, feature_selection_on, recup_past_trials):
             restore_best_weights=True
         )
 
-        # --- MODIFIÉ: Entraînement avec l'ensemble de validation ---
+        # Entraînement du modèle final
         final_model.fit(
             X_train_res_final, y_res, 
             batch_size=BATCH_SIZE, 
@@ -380,11 +394,12 @@ def main(debug_on, feature_selection_on, recup_past_trials):
             callbacks=[early_stop_final]
         )
 
-        # 3. Évaluation finale sur le Holdout (gen_test_final)
+        # Prédictions finales sur l’ensemble Holdout (probabilités)
         proba_final = final_model.predict(gen_test_final)
         y_true_final = np.concatenate([gen_test_final[i][1] for i in range(len(gen_test_final))])
         proba_final = proba_final[:len(y_true_final)]
 
+        # Logique de prédiction finale avec fallback neutre si incertitude trop grande
         y_pred_final = []
         for proba in proba_final:
             top2 = np.sort(proba)[::-1][:2]
@@ -397,7 +412,7 @@ def main(debug_on, feature_selection_on, recup_past_trials):
         # 4. Sauvegarde et rapport
         if not os.path.exists(PREDICTION_SAVE_DIR):
             os.makedirs(PREDICTION_SAVE_DIR)
-            
+        
         proba_df = pd.DataFrame(proba_final, columns=[f"proba_class_{i}" for i in range(proba_final.shape[1])])
         proba_df["y_pred"] = y_pred_final
         proba_df["y_true"] = y_true_final

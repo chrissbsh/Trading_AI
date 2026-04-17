@@ -1,5 +1,22 @@
 import numpy as np
 
+"""
+Ce fichier de configuration centralise tous les paramètres utilisés dans le pipeline de prédiction 
+du S&P500 (classification multi-classes). Il permet de piloter l’ensemble des étapes du processus, 
+de la préparation des données à l’entraînement et à l’évaluation des modèles.
+
+Contenu du fichier :
+- Paramètres liés aux données (fichier source, colonne de date, colonne cible).
+- Paramètres de sélection de features (nombre de variables à retenir).
+- Paramètres de preprocessing temporel (horizon de prédiction, taille des séquences, seuils de classification).
+- Paramètres du découpage temporel (périodes d’entraînement/validation, test).
+- Paramètres d'entraînement du modèle (epochs, batch, learning rate, early stopping).
+- Paramètres liés à Optuna (nombre d’essais).
+- Répertoires de sauvegarde pour les modèles, prédictions et résultats.
+
+Ce fichier assure la cohérence et la flexibilité du pipeline sans modifier le code principal.
+"""
+
 # ───────────────────────── DATA PARAMETERS ─────────────────────── #
 DATA_FILE_PATH = "csv_data/consolidated_data/final_complete_data.csv"
 DATE_COL = "Date"
@@ -17,10 +34,7 @@ STRIDE = 1  # pas de temps entre les séquences stride=1 → toutes les séquenc
 THRESHOLD_STRATEGY = "fixed" # "fixed" or "adaptive"
 FIXED_THRESHOLDS = np.array([-0.02, 0.02])
 
-# ──────────────── WALK-FORWARD PARAMETERS ───────────────── #
-TRAIN_YEARS = 3
-VAL_YEARS = 2
-TEST_MONTHS = 12
+# ──────────────── SPLIT PARAMETERS ───────────────── #
 HOLDOUT_START_DATE = "2023-01-03"
 HOLDOUT_END_DATE = "2025-04-14"
 
