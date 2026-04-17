@@ -5,6 +5,8 @@ import numpy as np
 from pipeline.config import *
 import random
 import tensorflow as tf
+from datetime import datetime
+import matplotlib.pyplot as plt
 
 from pipeline.feature_selection import select_top_features_pca, select_top_features_shap
 
@@ -55,6 +57,114 @@ tf.config.experimental.enable_op_determinism()
 # Afficher plus de lignes et colonnes
 pd.set_option('display.max_rows', 500)
 pd.set_option('display.max_columns', 100)
+
+
+def create_results_dir():
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    results_root = os.path.join(project_root, "results")
+    os.makedirs(results_root, exist_ok=True)
+    run_id = datetime.now().strftime(f"model_v{MODEL_VERSION}_%Y%m%d_%H%M%S")
+    run_dir = os.path.join(results_root, run_id)
+    os.makedirs(run_dir, exist_ok=True)
+    return run_dir
+
+
+def save_training_artifacts(history_obj, output_dir, prefix, save_history_csv=True):
+    history_df = pd.DataFrame(history_obj.history)
+    if save_history_csv:
+        history_csv_path = os.path.join(output_dir, f"{prefix}_history.csv")
+        history_df.to_csv(history_csv_path, index=False)
+
+    metric_groups = [
+        ("loss", "val_loss", "Loss"),
+        ("accuracy", "val_accuracy", "Accuracy"),
+        ("f1_macro", "val_f1_macro", "F1 Macro"),
+        ("balanced_accuracy", "val_balanced_accuracy", "Balanced Accuracy"),
+    ]
+
+    available_groups = []
+    for train_metric, val_metric, title in metric_groups:
+        if train_metric in history_df.columns or val_metric in history_df.columns:
+            available_groups.append((train_metric, val_metric, title))
+
+    if not available_groups:
+        return
+
+    n_plots = len(available_groups)
+    n_cols = 2
+    n_rows = int(np.ceil(n_plots / n_cols))
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, 4.5 * n_rows))
+    axes = np.array(axes).reshape(-1)
+
+    for idx, (train_metric, val_metric, title) in enumerate(available_groups):
+        ax = axes[idx]
+        if train_metric in history_df.columns:
+            ax.plot(history_df[train_metric], label=train_metric)
+        if val_metric in history_df.columns:
+            ax.plot(history_df[val_metric], label=val_metric)
+        ax.set_title(f"{title} - {prefix}")
+        ax.set_xlabel("Epoch")
+        ax.set_ylabel(title)
+        ax.grid(alpha=0.3)
+        ax.legend()
+
+    for idx in range(n_plots, len(axes)):
+        axes[idx].axis("off")
+
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, f"{prefix}_training_curves.png"), dpi=150)
+    plt.close(fig)
+
+
+def save_confusion_matrix_plot(cm, output_path):
+    plt.figure(figsize=(7, 6))
+    plt.imshow(cm, interpolation="nearest", cmap=plt.cm.Blues)
+    plt.title("Confusion Matrix")
+    plt.colorbar()
+    tick_marks = np.arange(cm.shape[0])
+    plt.xticks(tick_marks, tick_marks)
+    plt.yticks(tick_marks, tick_marks)
+    plt.xlabel("Predicted label")
+    plt.ylabel("True label")
+
+    threshold = cm.max() / 2 if cm.size else 0
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            plt.text(
+                j,
+                i,
+                format(cm[i, j], "d"),
+                ha="center",
+                va="center",
+                color="white" if cm[i, j] > threshold else "black",
+            )
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
+
+
+def save_prediction_distribution_plot(y_true, y_pred, output_path):
+    classes = np.unique(np.concatenate([y_true, y_pred]))
+    true_counts = [np.sum(y_true == c) for c in classes]
+    pred_counts = [np.sum(y_pred == c) for c in classes]
+
+    x = np.arange(len(classes))
+    width = 0.35
+
+    plt.figure(figsize=(10, 6))
+    plt.bar(x - width / 2, true_counts, width, label="True")
+    plt.bar(x + width / 2, pred_counts, width, label="Pred")
+    plt.xticks(x, classes)
+    plt.xlabel("Class")
+    plt.ylabel("Count")
+    plt.title("True vs Predicted class distribution")
+    plt.grid(axis="y", alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150)
+    plt.close()
 
 # Définir l'architecture du modèle
 def lstm_model_v2(input_shape, seq_len_keep, n_classes):
@@ -117,6 +227,9 @@ def create_target(df, tag="", debug_on=False):
 
 # Fonction principale du pipeline (CV ou non, avec ou sans sélection de features, debug ou non)
 def main(cross_validation, debug_on, feature_selection_on):
+    results_dir = create_results_dir()
+    print(f"🔹 Dossier de sortie des résultats : {results_dir}")
+
     # -- Chargement et split --
     df_raw = load_data(debug_on)
     # Supprimer certaines colonnes inutiles à la prédiction
@@ -234,8 +347,10 @@ def main(cross_validation, debug_on, feature_selection_on):
             patience=PATIENCE,
             restore_best_weights=True)
 
-            model.fit(train_gen, validation_data=val_gen, epochs=EPOCHS,
-                      callbacks=[early_stop], verbose=1)
+            history_cv = model.fit(train_gen, validation_data=val_gen, epochs=EPOCHS,
+                                   callbacks=[early_stop], verbose=1)
+
+            save_training_artifacts(history_cv, results_dir, f"cv_fold_{fold+1}")
             
             if debug_on:    
                 input("   [PAUSE] Entraînement terminé. ⇨ Entrée pour prédictions...")
@@ -280,6 +395,13 @@ def main(cross_validation, debug_on, feature_selection_on):
         print(f"BalAcc Moyenne: {np.mean(bals):.4f} ± {np.std(bals):.4f}")
         print(f"F1-macro Moyenne: {np.mean(f1s):.4f} ± {np.std(f1s):.4f}")
         print(f"F1-weighted Moyenne: {np.mean(f1w):.4f} ± {np.std(f1w):.4f}")
+
+        cv_df = pd.DataFrame(
+            fold_stats,
+            columns=["accuracy", "balanced_accuracy", "f1_macro", "f1_weighted"]
+        )
+        cv_df.insert(0, "fold", np.arange(1, len(cv_df) + 1))
+        cv_df.to_csv(os.path.join(results_dir, "cv_fold_metrics.csv"), index=False)
         
         input("   [PAUSE] Fin validation croisée. Entrée pour pipeline final...")
 
@@ -376,10 +498,12 @@ def main(cross_validation, debug_on, feature_selection_on):
         patience=PATIENCE,
         restore_best_weights=True)
 
-    final_model.fit(gen_train,
-                    validation_data=gen_val,
-                    epochs=EPOCHS,
-                    callbacks=[early_stop], verbose=1)
+    history_final = final_model.fit(gen_train,
+                                    validation_data=gen_val,
+                                    epochs=EPOCHS,
+                                    callbacks=[early_stop], verbose=1)
+
+    save_training_artifacts(history_final, results_dir, "final_train", save_history_csv=False)
 
     if debug_on:
         input("   [PAUSE] Entraînement final OK. Entrée pour évaluation...")
@@ -421,8 +545,11 @@ def main(cross_validation, debug_on, feature_selection_on):
     print(f"   → Balanced Acc. : {bal_f:.4f}")
     print(f"   → F1-macro      : {f1m_f:.4f}")
     print(f"   → F1-weighted      : {f1w_f:.4f}")
-    print(classification_report(y_true_final, y_pred_final, zero_division=0))
-    print(confusion_matrix(y_true_final, y_pred_final))
+    classif_report_text = classification_report(y_true_final, y_pred_final, zero_division=0)
+    classif_report_dict = classification_report(y_true_final, y_pred_final, output_dict=True, zero_division=0)
+    cm = confusion_matrix(y_true_final, y_pred_final)
+    print(classif_report_text)
+    print(cm)
 
     print(f"Nombre de classe 0 prédite (y_pred_final): {(y_pred_final == 0).sum()}")
     print(f"Nombre de classe 0 réelle (y_true_final): {(y_true_final == 0).sum()}")
@@ -432,6 +559,47 @@ def main(cross_validation, debug_on, feature_selection_on):
 
     print(f"Nombre de classe 2 prédite (y_pred_final): {(y_pred_final == 2).sum()}")
     print(f"Nombre de classe 2 réelle (y_true_final): {(y_true_final == 2).sum()}")
+
+    pred_dates = pd.to_datetime(date_test[full_seq:full_seq + len(y_true_final)])
+    sorted_proba_final = np.sort(proba_final, axis=1)[:, ::-1]
+    pred_df = pd.DataFrame({
+        "date_prediction": pred_dates,
+        "y_true": y_true_final,
+        "y_pred": y_pred_final,
+        "proba_0": proba_final[:, 0],
+        "proba_1": proba_final[:, 1],
+        "proba_2": proba_final[:, 2],
+        "top_proba": sorted_proba_final[:, 0],
+        "second_proba": sorted_proba_final[:, 1],
+        "confidence_gap": sorted_proba_final[:, 0] - sorted_proba_final[:, 1],
+    })
+    pred_df.to_csv(os.path.join(results_dir, "holdout_predictions.csv"), index=False)
+
+    metrics_df = pd.DataFrame([
+        {
+            "model_version": MODEL_VERSION,
+            "ecart_min": ECART_MIN,
+            "accuracy": acc_f,
+            "balanced_accuracy": bal_f,
+            "f1_macro": f1m_f,
+            "f1_weighted": f1w_f,
+            "n_holdout_samples": len(y_true_final),
+        }
+    ])
+    metrics_df.to_csv(os.path.join(results_dir, "holdout_metrics.csv"), index=False)
+
+    report_df = pd.DataFrame(classif_report_dict).transpose()
+    report_df.to_csv(os.path.join(results_dir, "classification_report.csv"))
+
+    save_confusion_matrix_plot(cm, os.path.join(results_dir, "confusion_matrix.png"))
+    save_prediction_distribution_plot(
+        y_true_final,
+        y_pred_final,
+        os.path.join(results_dir, "class_distribution_true_vs_pred.png"),
+    )
+
+    print("🔹 Sauvegardes terminées dans le dossier résultats :")
+    print(f"   → {results_dir}")
 
 
     if debug_on:
