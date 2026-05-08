@@ -4,6 +4,7 @@ indicator_list/
 report/
 old_predictions/
 bibliographie/
+plan/
 
 __pycache__/
 *.pyc

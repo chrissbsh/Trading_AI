@@ -30,9 +30,9 @@ TOP_N_FEATURES = 25
 PRED_HORIZON = 7  # jours, combien de pas dans le futur on veut prédire (horizon = 5 → prédire t+5 à partir de t)
 N_CLASSES = 3
 SEQUENCE_LENGTH = 90  # nombre de pas de temps utilisés pour prédire la suite
-STRIDE = 1  # pas de temps entre les séquences stride=1 → toutes les séquences se chevauchent, stride=sequence_length → elles ne se chevauchent pas.
+STRIDE = 5  # réduit les séquences corrélées pour limiter l'overfitting (était 1)
 THRESHOLD_STRATEGY = "fixed" # "fixed" or "adaptive"
-FIXED_THRESHOLDS = np.array([-0.02, 0.02])
+FIXED_THRESHOLDS = np.array([-0.015, 0.015])  # resserré pour rééquilibrer les classes (était [-0.02, 0.02])
 
 # ──────────────── SPLIT PARAMETERS ───────────────── #
 HOLDOUT_START_DATE = "2023-01-03"
@@ -41,9 +41,16 @@ HOLDOUT_END_DATE = "2025-04-14"
 # ─────────────────── MODEL TRAINING PARAMETERS ─────────────────── #
 EPOCHS = 200
 BATCH_SIZE = 128
-PATIENCE = 50
+PATIENCE = 20  # réduit pour stopper l'overfitting plus tôt (était 50)
 LEARNING_RATE = 0.01
 N_TRIALS = 50 # Nombre d'essais Optuna
+
+# Multiplicateurs appliqués PAR-DESSUS le class_weight 'balanced' pour renforcer les classes rares.
+# Augmenter CLASS_WEIGHT_BOOST[2] si le modèle continue à rater les hausses.
+CLASS_WEIGHT_BOOST = {0: 1.5, 1: 0.7, 2: 2.0}
+
+# Seuil de confiance pour la décision finale (différence top1 - top2 probabilité)
+ECART_MIN = 0.05
 
 # ───────────────────── OUTPUT PARAMETERS ────────────────────── #
 MODEL_SAVE_DIR = "Pipeline/model"

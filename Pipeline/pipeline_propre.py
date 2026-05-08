@@ -9,9 +9,11 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 
 from pipeline.feature_selection import select_top_features_pca, select_top_features_shap
+from pipeline.tf_metrics import *
+from pipeline.backtest import run_backtest
 
 from tensorflow.keras.models import Sequential # type: ignore
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, Lambda # type: ignore
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Input # type: ignore
 from tensorflow.keras import regularizers # type: ignore
 from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator # type: ignore
 from tensorflow.keras.callbacks import EarlyStopping # type: ignore
@@ -20,7 +22,6 @@ from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, f1_score, balanced_accuracy_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.preprocessing import StandardScaler
-from pipeline.tf_metrics import *
 
 from focal_loss import SparseCategoricalFocalLoss
 
@@ -167,14 +168,14 @@ def save_prediction_distribution_plot(y_true, y_pred, output_path):
     plt.close()
 
 # Définir l'architecture du modèle
-def lstm_model_v2(input_shape, seq_len_keep, n_classes):
+def lstm_model_v2(input_shape, n_classes):
     model = Sequential()
     model.add(Input(shape=input_shape))
-    model.add(Lambda(lambda z: z[:, :seq_len_keep, :], name="truncate_future"))
-    model.add(LSTM(64, return_sequences=False, 
-                   kernel_regularizer=regularizers.l2(0.01)
+    model.add(LSTM(64, return_sequences=False,
+                   kernel_regularizer=regularizers.l2(0.05),
+                   recurrent_dropout=0.2,
                    ))
-    model.add(Dropout(0.3))
+    model.add(Dropout(0.5))
     model.add(Dense(32, activation='relu'))
     model.add(Dense(n_classes, activation='softmax'))
     return model
@@ -187,7 +188,7 @@ def load_data(debug_on):
     print(df.head())
 
     if debug_on:
-        input("   [PAUSE] Vérifiez le DataFrame chargé puis appuyez sur Entrée...")
+        print("   [DEBUG] Vérifiez le DataFrame chargé.")
 
     return df
 
@@ -201,8 +202,8 @@ def create_target(df, tag="", debug_on=False):
     print("   → Aperçu ret_future :")
     print(df[[DATE_COL, TARGET_PRICE_COL, 'ret_future']].head(10))
 
-    if debug_on:    
-        input("   [PAUSE] Vérifiez ret_future puis Entrée...")
+    if debug_on:
+        print("   [DEBUG] Vérifiez ret_future.")
 
     if THRESHOLD_STRATEGY == "fixed":
         thresholds = FIXED_THRESHOLDS
@@ -221,9 +222,10 @@ def create_target(df, tag="", debug_on=False):
         raise ValueError(f"Stratégie de seuil non reconnue : {THRESHOLD_STRATEGY}")
 
     if debug_on:
-        input("   [PAUSE] Vérifiez la colonne 'target' puis Entrée...")
+        print("   [DEBUG] Vérifiez la colonne 'target'.")
 
     return df
+
 
 # Fonction principale du pipeline (CV ou non, avec ou sans sélection de features, debug ou non)
 def main(cross_validation, debug_on, feature_selection_on):
@@ -239,7 +241,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     print(f"🔹 Total lignes après nettoyage : {len(df_raw)}")
 
     if debug_on:
-        input("   [PAUSE] Vérifiez le nettoyage initial puis Entrée...")
+        print("   [DEBUG] Vérifiez le nettoyage initial.")
 
     # Création des splits temporels (train vs holdout)
     df_holdout = df_raw[(df_raw[DATE_COL] >= HOLDOUT_START_DATE) & (df_raw[DATE_COL] <= HOLDOUT_END_DATE)].copy()
@@ -248,7 +250,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     print(f"🔹 Lignes pour holdout (avant target)    : {len(df_holdout)}")
 
     if debug_on:
-        input("   [PAUSE] Vérifiez les splits temporels puis Entrée...")
+        print("   [DEBUG] Vérifiez les splits temporels.")
 
     df_main    = create_target(df_main, tag="(train)", debug_on=debug_on)
     df_holdout = create_target(df_holdout, tag="(holdout)", debug_on=debug_on)
@@ -259,7 +261,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     print("🔹 Distribution classes HOLDOUT :")
     print(df_holdout["target"].value_counts(normalize=True))
     if debug_on:
-        input("   [PAUSE] Vérifiez distributions puis Entrée...")
+        print("   [DEBUG] Vérifiez distributions.")
 
     # -- Cross-validation ou pipeline complet --
     if cross_validation:
@@ -276,7 +278,7 @@ def main(cross_validation, debug_on, feature_selection_on):
             date_val   = df_val[DATE_COL].values
             print(f"👉 Train: {len(df_train)}, Val: {len(df_val)}")
             if debug_on:
-                input("   [PAUSE] Vérifiez les indexes de split puis Entrée...")
+                print("   [DEBUG] Vérifiez les indexes de split.")
             
             # Appliquer SHAP pour sélectionner les top N features (sur df_train)
             if feature_selection_on:
@@ -289,7 +291,7 @@ def main(cross_validation, debug_on, feature_selection_on):
                 print(f"   → features finales utilisées : {features}")
 
                 if debug_on:
-                    input("   [PAUSE] Vérifiez features puis Entrée...")
+                    print("   [DEBUG] Vérifiez features.")
 
             else:
                 features = [f for f in df_train.columns if f not in (DATE_COL, 'target', 'ret_future')]
@@ -302,28 +304,27 @@ def main(cross_validation, debug_on, feature_selection_on):
             y_val   = df_val['target'].to_numpy()
             print("🔹 Shape X_train, X_val, y_train, y_val :", X_train.shape, X_val.shape, y_train.shape, y_val.shape)
             
-            if debug_on: 
-                input("   [PAUSE] Vérifiez les shapes puis Entrée...")
+            if debug_on:
+                print("   [DEBUG] Vérifiez les shapes.")
 
             # Générateurs
-            full_seq = SEQUENCE_LENGTH + PRED_HORIZON
-            # Création des générateurs de séquences temporelles
-            train_gen = TimeseriesGenerator(X_train, y_train, length=full_seq, batch_size=BATCH_SIZE)
-            val_gen   = TimeseriesGenerator(X_val,   y_val,   length=full_seq, batch_size=BATCH_SIZE)
+            train_gen = TimeseriesGenerator(X_train, y_train, length=SEQUENCE_LENGTH, batch_size=BATCH_SIZE, stride=STRIDE)
+            val_gen   = TimeseriesGenerator(X_val,   y_val,   length=SEQUENCE_LENGTH, batch_size=BATCH_SIZE, stride=STRIDE)
             print("🔹 Nombre de batches train/val :", len(train_gen), len(val_gen))
 
-            # Calcul des poids de classes (pour gérer déséquilibre)
-            cw = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+            # Calcul des poids de classes (balanced × boost manuel pour renforcer les classes rares)
+            cw_raw = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+            cw = np.array([cw_raw[c] * CLASS_WEIGHT_BOOST.get(c, 1.0) for c in range(N_CLASSES)])
 
             cw_dict = dict(enumerate(cw))
 
             print("🔹 Class weights pli :", cw_dict)
             
             if debug_on:
-                input("   [PAUSE] Vérifiez les generators puis Entrée...")
+                print("   [DEBUG] Vérifiez les generators.")
 
             # Modèle
-            model = lstm_model_v2((full_seq, len(features)), SEQUENCE_LENGTH, N_CLASSES)
+            model = lstm_model_v2((SEQUENCE_LENGTH, len(features)), N_CLASSES)
             metrics = ['accuracy', F1Macro(3), BalancedAcc(3)]
 
             gamma = 2.0
@@ -338,7 +339,7 @@ def main(cross_validation, debug_on, feature_selection_on):
             model.summary()
 
             if debug_on:
-                input("   [PAUSE] Vérifiez l'architecture puis Entrée...")
+                print("   [DEBUG] Vérifiez l'architecture.")
 
             # Entraînement avec early stopping basé sur F1 macro
             early_stop = EarlyStopping(
@@ -352,8 +353,8 @@ def main(cross_validation, debug_on, feature_selection_on):
 
             save_training_artifacts(history_cv, results_dir, f"cv_fold_{fold+1}")
             
-            if debug_on:    
-                input("   [PAUSE] Entraînement terminé. ⇨ Entrée pour prédictions...")
+            if debug_on:
+                print("   [DEBUG] Entraînement terminé.")
 
            # Prédictions sur les données de validation
             y_proba = model.predict(val_gen)
@@ -366,11 +367,11 @@ def main(cross_validation, debug_on, feature_selection_on):
             for j in range(min(3, len(y_true))):
                 start_date      = pd.to_datetime(date_val[j])
                 end_input_date  = pd.to_datetime(date_val[j + SEQUENCE_LENGTH - 1])
-                pred_date       = pd.to_datetime(date_val[j + full_seq])
+                pred_date       = pd.to_datetime(date_val[j + SEQUENCE_LENGTH + PRED_HORIZON - 1])
                 print(f"  Sample {j}: début={start_date.date()}, fin_input={end_input_date.date()}, date_prediction={pred_date.date()}, y_true={y_true[j]}")
             
-            if debug_on:    
-                input("   [PAUSE] Vérifiez dates des fenêtres CV puis Entrée...")
+            if debug_on:
+                print("   [DEBUG] Vérifiez dates des fenêtres CV.")
 
             # Conversion des proba → classes avec logique de seuil de confiance
             ecart_min = ECART_MIN
@@ -403,7 +404,8 @@ def main(cross_validation, debug_on, feature_selection_on):
         cv_df.insert(0, "fold", np.arange(1, len(cv_df) + 1))
         cv_df.to_csv(os.path.join(results_dir, "cv_fold_metrics.csv"), index=False)
         
-        input("   [PAUSE] Fin validation croisée. Entrée pour pipeline final...")
+    if debug_on:
+        print("   [DEBUG] Fin validation croisée.")
 
 
     # Finalisation avec entraînement sur tout df_main (pipeline complet)
@@ -420,7 +422,7 @@ def main(cross_validation, debug_on, feature_selection_on):
         final_feats = [f for f in df_main.columns if f not in ('target', 'ret_future')]
     
     if debug_on:
-        input("   [PAUSE] Vérifiez les features finales puis Entrée...")
+        print("   [DEBUG] Vérifiez les features finales.")
 
     # --- 1. Division des données en Train / Validation / Test ---
     print("🔹 Division chronologique des données...")
@@ -459,30 +461,29 @@ def main(cross_validation, debug_on, feature_selection_on):
     print("🔹 Shapes finales y :", y_train.shape, y_val.shape, y_test.shape)
 
     if debug_on:
-        input("   [PAUSE] Vérifiez les données train/val/test puis Entrée...")
+        print("   [DEBUG] Vérifiez les données train/val/test.")
 
     # --- 3. Création des TimeseriesGenerators ---
-    full_seq = SEQUENCE_LENGTH + PRED_HORIZON
-    gen_train = TimeseriesGenerator(X_train_scaled, y_train, length=full_seq, batch_size=BATCH_SIZE)
-    gen_val   = TimeseriesGenerator(X_val_scaled, y_val, length=full_seq, batch_size=BATCH_SIZE)
-    gen_test  = TimeseriesGenerator(X_test_scaled, y_test, length=full_seq, batch_size=BATCH_SIZE)
+    gen_train = TimeseriesGenerator(X_train_scaled, y_train, length=SEQUENCE_LENGTH, batch_size=BATCH_SIZE, stride=STRIDE)
+    gen_val   = TimeseriesGenerator(X_val_scaled,   y_val,   length=SEQUENCE_LENGTH, batch_size=BATCH_SIZE, stride=STRIDE)
+    gen_test  = TimeseriesGenerator(X_test_scaled,  y_test,  length=SEQUENCE_LENGTH, batch_size=BATCH_SIZE, stride=1)
 
     print("🔹 Batches finaux train/validation/test :", len(gen_train), len(gen_val), len(gen_test))
 
     # Vérification des séquences
     print(f"Vérification : première séquence a {gen_train[0][0].shape[1]} pas temporels")
-    print(f"Vérification : modèle attend {full_seq} pas, tronqué à {SEQUENCE_LENGTH}")
-    assert gen_train[0][0].shape[1] == full_seq, "Incohérence dans la longueur des séquences"
+    assert gen_train[0][0].shape[1] == SEQUENCE_LENGTH, "Incohérence dans la longueur des séquences"
 
-    cw_f = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+    cw_raw_f = compute_class_weight('balanced', classes=np.unique(y_train), y=y_train)
+    cw_f = np.array([cw_raw_f[c] * CLASS_WEIGHT_BOOST.get(c, 1.0) for c in range(N_CLASSES)])
     cw_dict_f = dict(enumerate(cw_f))
     print("Class weights final :", cw_dict_f)
 
     if debug_on:
-        input("   [PAUSE] Vérifiez les generators finaux puis Entrée...")
+        print("   [DEBUG] Vérifiez les generators finaux.")
 
     # Entraînement final
-    final_model = lstm_model_v2((full_seq, len(final_feats)), SEQUENCE_LENGTH, N_CLASSES)
+    final_model = lstm_model_v2((SEQUENCE_LENGTH, len(final_feats)), N_CLASSES)
     metrics = ['accuracy', F1Macro(3), BalancedAcc(3)]
 
     gamma = 2.0
@@ -503,10 +504,31 @@ def main(cross_validation, debug_on, feature_selection_on):
                                     epochs=EPOCHS,
                                     callbacks=[early_stop], verbose=1)
 
-    save_training_artifacts(history_final, results_dir, "final_train", save_history_csv=False)
+    save_training_artifacts(history_final, results_dir, "final_train", save_history_csv=True)
+
+    model_path = os.path.join(results_dir, f"model_v{MODEL_VERSION}.keras")
+    final_model.save(model_path)
+    print(f"🔹 Modèle sauvegardé : {model_path}")
 
     if debug_on:
-        input("   [PAUSE] Entraînement final OK. Entrée pour évaluation...")
+        print("   [DEBUG] Entraînement final OK.")
+
+    # Optimisation de ECART_MIN sur la validation set
+    print("\n🔹 Optimisation du seuil de confiance ECART_MIN sur val...")
+    proba_val_opt = final_model.predict(gen_val)
+    y_true_val_opt = np.concatenate([gen_val[i][1] for i in range(len(gen_val))])
+    proba_val_opt = proba_val_opt[:len(y_true_val_opt)]
+    best_ecart, best_f1 = ECART_MIN, 0.0
+    for threshold in np.arange(0.0, 0.5, 0.01):
+        preds = []
+        for p in proba_val_opt:
+            s = np.sort(p)[::-1]
+            preds.append(int(np.argmax(p)) if (s[0] - s[1]) >= threshold else 1)
+        score = f1_score(y_true_val_opt, preds, average='macro', zero_division=0)
+        if score > best_f1:
+            best_f1, best_ecart = score, threshold
+    print(f"   → ECART_MIN optimal : {best_ecart:.2f} (F1-macro val = {best_f1:.4f}, valeur config = {ECART_MIN})")
+    ecart_used = best_ecart
 
     # Évaluation holdout
     print("\n--- Évaluation HOLDOUT ---")
@@ -519,14 +541,14 @@ def main(cross_validation, debug_on, feature_selection_on):
     for j in range(min(3, len(y_true_final))):
         start_date     = pd.to_datetime(date_test[j])
         end_input_date = pd.to_datetime(date_test[j + SEQUENCE_LENGTH - 1])
-        pred_date      = pd.to_datetime(date_test[j + full_seq])
+        pred_date      = pd.to_datetime(date_test[j + SEQUENCE_LENGTH + PRED_HORIZON - 1])
         print(f"  Sample {j}: début={start_date.date()}, fin_input={end_input_date.date()}, date_prediction={pred_date.date()}, y_true={y_true_final[j]}")
         
-    if debug_on:    
-        input("   [PAUSE] Vérifiez dates des fenêtres HoldOut puis Entrée...")
+    if debug_on:
+        print("   [DEBUG] Vérifiez dates des fenêtres HoldOut.")
 
     # Transformation probabilités → prédictions avec logique de confiance
-    ecart_min = ECART_MIN
+    ecart_min = ecart_used
     y_pred_final_list = []
     for proba in proba_final:
         sorted_proba = np.sort(proba)[::-1]
@@ -560,7 +582,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     print(f"Nombre de classe 2 prédite (y_pred_final): {(y_pred_final == 2).sum()}")
     print(f"Nombre de classe 2 réelle (y_true_final): {(y_true_final == 2).sum()}")
 
-    pred_dates = pd.to_datetime(date_test[full_seq:full_seq + len(y_true_final)])
+    pred_dates = pd.to_datetime(date_test[SEQUENCE_LENGTH:SEQUENCE_LENGTH + len(y_true_final)])
     sorted_proba_final = np.sort(proba_final, axis=1)[:, ::-1]
     pred_df = pd.DataFrame({
         "date_prediction": pred_dates,
@@ -598,12 +620,16 @@ def main(cross_validation, debug_on, feature_selection_on):
         os.path.join(results_dir, "class_distribution_true_vs_pred.png"),
     )
 
+    # Backtest financier sur le holdout
+    price_series = test_df.set_index(DATE_COL)[TARGET_PRICE_COL]
+    run_backtest(pred_df, price_series, results_dir)
+
     print("🔹 Sauvegardes terminées dans le dossier résultats :")
     print(f"   → {results_dir}")
 
 
     if debug_on:
-        input("   [PAUSE] Vérifiez le rapport de classification puis Entrée...")
+        print("   [DEBUG] Vérifiez le rapport de classification.")
 
 
 if __name__ == "__main__":
@@ -612,11 +638,9 @@ if __name__ == "__main__":
 
     feature_selection_on = True # True avec feature selection, False sans
 
-    ECART_MIN = 0.05
-
     print(f"\n--- Lancement pipeline version : {MODEL_VERSION} ---")
     if os.path.exists(f"Pipeline/model/model_v{MODEL_VERSION}.keras"):
         print("⚠️  Le modèle existe déjà :", f"model_v{MODEL_VERSION}.keras")
-        input("   Appuyez sur Entrée pour continuer ou Ctrl+C pour annuler...")
+        print("   (Continuera automatiquement. Ctrl+C pour annuler.)")
 
     main(cross_validation, debug_on, feature_selection_on)
