@@ -5,7 +5,9 @@ report/
 old_predictions/
 bibliographie/
 plan/
+results/
 
 __pycache__/
 *.pyc
 .vscode/
+*.keras
