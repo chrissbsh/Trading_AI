@@ -52,8 +52,8 @@ def calculate_fibonacci_levels(df, window=20):
 # Calcul de différents indicteurs techniques
 def calculate_indicators(df):
     # Basique
-    df['sp500_prev_close'] = df['SP500_historical_data_Close'].shift(1)
-    df['sp500_return_1d'] = df['SP500_historical_data_Close'] / df['sp500_prev_close'] - 1
+    # df['sp500_prev_close'] = df['SP500_historical_data_Close'].shift(1)
+    # df['sp500_return_1d'] = df['SP500_historical_data_Close'] / df['sp500_prev_close'] - 1
 
     # Ajout des indicateurs personnalisés
     df['std_21'] = df['sp500_return_1d'].rolling(21).std()
@@ -87,7 +87,7 @@ def calculate_indicators(df):
     df['BB_Low'] = bb.bollinger_lband()
     df['BB_Mid'] = bb.bollinger_mavg()
 
-    df = calculate_fibonacci_levels(df, window=20)
+    # df = calculate_fibonacci_levels(df, window=20)
 
     stoch = StochasticOscillator(high=df['High'], low=df['Low'],
                                  close=df['Close'], window=14, smooth_window=3)
@@ -122,7 +122,40 @@ def calculate_indicators(df):
     df['DI_Plus'] = adx.adx_pos()
     df['DI_Minus'] = adx.adx_neg()
 
-    df.drop(['Close', 'High', 'Low', 'Open', 'Volume', 'Fib_High', 'Fib_Low', 'Fib_Range'], axis=1, inplace=True)
+    df.drop(['Close', 'High', 'Low', 'Open', 'Volume'], axis=1, inplace=True)
+
+    # ── Features dérivées macro ──────────────────────────────────────────
+    # Spread 2Y-10Y (indicateur de récession le plus fiable)
+    if 'DGS2_DGS2' in df.columns and 'Market_yield_US_10_year_DGS10' in df.columns:
+        df['yield_spread_2y10y'] = df['Market_yield_US_10_year_DGS10'] - df['DGS2_DGS2']
+
+    # Momentum WTI sur 21 jours
+    if 'CL=F_historical_data_Close' in df.columns:
+        df['wti_momentum_21d'] = df['CL=F_historical_data_Close'].pct_change(21)
+
+    # Rotation sectorielle : tech vs finance, énergie vs santé
+    if 'XLK_historical_data_Close' in df.columns and 'XLF_historical_data_Close' in df.columns:
+        df['sector_rotation_tech_fin'] = df['XLK_historical_data_Close'] / df['XLF_historical_data_Close']
+    if 'XLE_historical_data_Close' in df.columns and 'XLV_historical_data_Close' in df.columns:
+        df['sector_rotation_energy_health'] = df['XLE_historical_data_Close'] / df['XLV_historical_data_Close']
+
+    # Accélération M2 sur 3 mois
+    if 'M2SL_M2SL' in df.columns:
+        df['m2_acceleration_3m'] = df['M2SL_M2SL'].pct_change(63)
+
+    # Variation du credit spread sur 5 jours
+    if 'BAA10Y_BAA10Y' in df.columns:
+        df['credit_spread_change_5d'] = df['BAA10Y_BAA10Y'].diff(5)
+
+    # Ratio vol implicite / vol réalisée (VIX vs HV30)
+    if '^VIX_historical_data_Close' in df.columns and 'hv_30' in df.columns:
+        df['vix_hv_ratio'] = df['^VIX_historical_data_Close'] / (df['hv_30'] * 100 + 1e-8)
+
+    # Momentum ETFs sectoriels sur 21 jours
+    for etf in ['XLK', 'XLF', 'XLE', 'XLV', 'XLI']:
+        col = f'{etf}_historical_data_Close'
+        if col in df.columns:
+            df[f'{etf}_momentum_21d'] = df[col].pct_change(21)
 
     return df
 

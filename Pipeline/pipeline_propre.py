@@ -206,20 +206,29 @@ def create_target(df, tag="", debug_on=False):
         print("   [DEBUG] Vérifiez ret_future.")
 
     if THRESHOLD_STRATEGY == "fixed":
-        thresholds = FIXED_THRESHOLDS
-        print(f"   → Seuils utilisés pour labellisation : {thresholds}")
-        def label_target(x):
-            if x < thresholds[0]:
-                return 0
-            elif x <= thresholds[1]:
-                return 1
-            else:
-                return 2
-        df["target"] = df["ret_future"].apply(label_target)
-        print("   → Répartition des classes après labellisation :")
-        print(df["target"].value_counts(normalize=True))
+        lo, hi = FIXED_THRESHOLDS
+        df["target"] = df["ret_future"].apply(
+            lambda x: 0 if x < lo else (2 if x > hi else 1)
+        )
+        print(f"   → Seuils fixes : [{lo}, {hi}]")
+    elif THRESHOLD_STRATEGY == "adaptive":
+        # Seuils proportionnels à la volatilité réalisée sur 21 jours (centile)
+        rolling_vol = df["ret_future"].abs().rolling(21, min_periods=5).mean()
+        vol_pct = rolling_vol.rank(pct=True).fillna(0.5)
+        lo_base, hi_base = FIXED_THRESHOLDS
+        df["_thresh"] = lo_base * (1 + 0.5 * (vol_pct - 0.5))
+        df["target"] = df.apply(
+            lambda r: 0 if r["ret_future"] < -r["_thresh"]
+            else (2 if r["ret_future"] > r["_thresh"] else 1),
+            axis=1,
+        )
+        df.drop(columns=["_thresh"], inplace=True)
+        print(f"   → Seuils adaptatifs (base [{lo_base}, {hi_base}]), médiane={df['_thresh'].median() if '_thresh' in df.columns else '~base'}")
     else:
         raise ValueError(f"Stratégie de seuil non reconnue : {THRESHOLD_STRATEGY}")
+
+    print("   → Répartition des classes après labellisation :")
+    print(df["target"].value_counts(normalize=True))
 
     if debug_on:
         print("   [DEBUG] Vérifiez la colonne 'target'.")
@@ -235,7 +244,9 @@ def main(cross_validation, debug_on, feature_selection_on):
     # -- Chargement et split --
     df_raw = load_data(debug_on)
     # Supprimer certaines colonnes inutiles à la prédiction
-    cols_to_drop = ["sp500_prev_close", "sp500_return_1d", "vix_direction", "vix_high"]
+    cols_to_drop = [
+        "sp500_prev_close", "sp500_return_1d", "vix_direction", "vix_high",
+    ]
     df_raw.drop(columns=cols_to_drop, errors='ignore', inplace=True)
     print(f"🔹 Colonnes restantes : {df_raw.columns.tolist()}")
     print(f"🔹 Total lignes après nettoyage : {len(df_raw)}")

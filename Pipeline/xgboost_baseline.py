@@ -48,12 +48,38 @@ def create_target(df, tag=""):
     ) / df[TARGET_PRICE_COL]
     df.dropna(subset=["ret_future"], inplace=True)
 
-    lo, hi = FIXED_THRESHOLDS
-    df["target"] = df["ret_future"].apply(
-        lambda x: 0 if x < lo else (2 if x > hi else 1)
-    )
+    if THRESHOLD_STRATEGY == "fixed":
+        lo, hi = FIXED_THRESHOLDS
+        df["target"] = df["ret_future"].apply(
+            lambda x: 0 if x < lo else (2 if x > hi else 1)
+        )
+        print(f"   → Seuils fixes : [{lo}, {hi}]")
+    elif THRESHOLD_STRATEGY == "adaptive":
+        rolling_vol = df["ret_future"].abs().rolling(21, min_periods=5).mean()
+        vol_pct = rolling_vol.rank(pct=True).fillna(0.5)
+        lo_base, _ = FIXED_THRESHOLDS
+        thresh = lo_base * (1 + 0.5 * (vol_pct - 0.5))
+        df["target"] = df.apply(
+            lambda r: 0 if r["ret_future"] < -thresh[r.name]
+            else (2 if r["ret_future"] > thresh[r.name] else 1),
+            axis=1,
+        )
+        print(f"   → Seuils adaptatifs (base {lo_base:.3f})")
+    else:
+        raise ValueError(f"Stratégie de seuil non reconnue : {THRESHOLD_STRATEGY}")
+
     print("   → Distribution classes :", df["target"].value_counts(normalize=True).to_dict())
     return df
+
+
+def pad_proba(proba, model_classes, n_classes=N_CLASSES):
+    """Expand proba from (n, len(model_classes)) to (n, n_classes), filling missing columns with 0."""
+    if proba.shape[1] == n_classes:
+        return proba
+    full = np.zeros((proba.shape[0], n_classes), dtype=proba.dtype)
+    for col_idx, cls in enumerate(model_classes):
+        full[:, int(cls)] = proba[:, col_idx]
+    return full
 
 
 def save_confusion_matrix_plot(cm, output_path):
@@ -171,7 +197,7 @@ def evaluate_and_save(model_name, y_true, y_pred, proba, date_index,
 # Optuna objective — LightGBM, optimise F1-Macro sur TimeSeriesSplit
 # ──────────────────────────────────────────────────────────────────────
 
-def _lgb_objective(trial, X, y, cw_dict):
+def _lgb_objective(trial, X, y):
     params = {
         "n_estimators": trial.suggest_int("n_estimators", 200, 2000),
         "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.2, log=True),
@@ -182,7 +208,6 @@ def _lgb_objective(trial, X, y, cw_dict):
         "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
         "reg_alpha": trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
         "reg_lambda": trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
-        "class_weight": cw_dict,
         "random_state": SEED,
         "verbosity": -1,
     }
@@ -191,7 +216,11 @@ def _lgb_objective(trial, X, y, cw_dict):
     for train_idx, val_idx in tscv.split(X):
         X_tr, X_vl = X.iloc[train_idx], X.iloc[val_idx]
         y_tr, y_vl = y[train_idx], y[val_idx]
-        m = lgb.LGBMClassifier(**params)
+        fold_classes = np.unique(y_tr)
+        fold_cw_raw = compute_class_weight("balanced", classes=fold_classes, y=y_tr)
+        fold_cw = {c: float(w * CLASS_WEIGHT_BOOST.get(c, 1.0))
+                   for c, w in zip(fold_classes, fold_cw_raw)}
+        m = lgb.LGBMClassifier(**params, class_weight=fold_cw)
         m.fit(X_tr, y_tr,
               eval_set=[(X_vl, y_vl)],
               callbacks=[lgb.early_stopping(30, verbose=False),
@@ -202,17 +231,129 @@ def _lgb_objective(trial, X, y, cw_dict):
 
 
 # ──────────────────────────────────────────────────────────────────────
+# Walk-forward validation
+# ──────────────────────────────────────────────────────────────────────
+
+def run_walk_forward(df_main, features, cw_dict, results_dir, n_folds=5):
+    """
+    Walk-forward sur n_folds fenêtres d'expansion croissante.
+    Chaque fold entraîne sur tout ce qui précède et teste sur la fenêtre suivante.
+    Produit walk_forward_metrics.csv avec les métriques par fold.
+    """
+    print(f"\n🔹 Walk-forward validation ({n_folds} folds)...")
+    fold_size = len(df_main) // (n_folds + 1)
+    fold_results = []
+
+    for fold in range(n_folds):
+        train_end   = fold_size * (fold + 1)
+        test_start  = train_end
+        test_end    = test_start + fold_size
+
+        df_tr = df_main.iloc[:train_end]
+        df_te = df_main.iloc[test_start:test_end]
+
+        if len(df_tr) < 100 or len(df_te) < 20:
+            continue
+
+        date_min = df_te[DATE_COL].iloc[0].date() if DATE_COL in df_te.columns else "?"
+        date_max = df_te[DATE_COL].iloc[-1].date() if DATE_COL in df_te.columns else "?"
+
+        X_tr = df_tr[features]
+        y_tr = df_tr["target"].values
+        X_te = df_te[features]
+        y_te = df_te["target"].values
+
+        sc = StandardScaler()
+        X_tr = pd.DataFrame(sc.fit_transform(X_tr), columns=features)
+        X_te = pd.DataFrame(sc.transform(X_te),     columns=features)
+
+        present_classes = np.unique(y_tr)
+        cw_raw_f = compute_class_weight("balanced", classes=present_classes, y=y_tr)
+        fold_cw  = {c: float(w * CLASS_WEIGHT_BOOST.get(c, 1.0))
+                    for c, w in zip(present_classes, cw_raw_f)}
+
+        model = lgb.LGBMClassifier(
+            n_estimators=500,
+            learning_rate=0.05,
+            max_depth=6,
+            num_leaves=31,
+            class_weight=fold_cw,
+            random_state=SEED,
+            verbosity=-1,
+        )
+        # val interne = derniers 20% du train pour early stopping
+        val_cut = int(0.8 * len(X_tr))
+        model.fit(
+            X_tr.iloc[:val_cut], y_tr[:val_cut],
+            eval_set=[(X_tr.iloc[val_cut:], y_tr[val_cut:])],
+            callbacks=[lgb.early_stopping(30, verbose=False),
+                       lgb.log_evaluation(period=-1)],
+        )
+
+        y_pred = model.predict(X_te)
+        acc  = accuracy_score(y_te, y_pred)
+        bal  = balanced_accuracy_score(y_te, y_pred)
+        f1m  = f1_score(y_te, y_pred, average="macro", zero_division=0)
+        r2   = f1_score(y_te, y_pred, labels=[2], average="macro", zero_division=0)  # recall class 2
+        r0   = f1_score(y_te, y_pred, labels=[0], average="macro", zero_division=0)  # recall class 0
+
+        print(f"   Fold {fold+1} [{date_min} → {date_max}] "
+              f"BalAcc={bal:.3f} F1m={f1m:.3f} R0={r0:.3f} R2={r2:.3f}")
+
+        fold_results.append({
+            "fold": fold + 1,
+            "test_start": str(date_min),
+            "test_end": str(date_max),
+            "n_train": len(df_tr),
+            "n_test": len(df_te),
+            "accuracy": acc,
+            "balanced_accuracy": bal,
+            "f1_macro": f1m,
+            "f1_class0": r0,
+            "f1_class2": r2,
+        })
+
+    wf_df = pd.DataFrame(fold_results)
+    wf_df.to_csv(os.path.join(results_dir, "walk_forward_metrics.csv"), index=False)
+
+    print(f"\n   ── Résumé walk-forward ──")
+    print(f"   BalAcc  : {wf_df['balanced_accuracy'].mean():.3f} ± {wf_df['balanced_accuracy'].std():.3f}")
+    print(f"   F1-Macro: {wf_df['f1_macro'].mean():.3f} ± {wf_df['f1_macro'].std():.3f}")
+    print(f"   F1-C0   : {wf_df['f1_class0'].mean():.3f} | F1-C2: {wf_df['f1_class2'].mean():.3f}")
+
+    # Graphique stabilité par fold
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    axes[0].bar(wf_df["fold"], wf_df["balanced_accuracy"], color="steelblue")
+    axes[0].axhline(wf_df["balanced_accuracy"].mean(), color="red", linestyle="--", label="moyenne")
+    axes[0].set_title("Balanced Accuracy par fold")
+    axes[0].set_xlabel("Fold")
+    axes[0].legend()
+    axes[1].bar(wf_df["fold"], wf_df["f1_macro"], color="darkorange")
+    axes[1].axhline(wf_df["f1_macro"].mean(), color="red", linestyle="--", label="moyenne")
+    axes[1].set_title("F1-Macro par fold")
+    axes[1].set_xlabel("Fold")
+    axes[1].legend()
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "walk_forward_stability.png"), dpi=150)
+    plt.close()
+
+    return wf_df
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────────────────────────────────
 
-def main(feature_selection_on=True, tune=False):
+def main(feature_selection_on=True, tune=False, walk_forward=False):
     results_dir = create_results_dir()
     print(f"🔹 Dossier résultats : {results_dir}")
 
     # 1. Chargement données
     print(f"🔹 Chargement : {DATA_FILE_PATH}")
     df_raw = pd.read_csv(DATA_FILE_PATH, parse_dates=[DATE_COL])
-    cols_to_drop = ["sp500_prev_close", "sp500_return_1d", "vix_direction", "vix_high"]
+    cols_to_drop = [
+        "sp500_prev_close", "sp500_return_1d", "vix_direction", "vix_high",
+    ]
     df_raw.drop(columns=cols_to_drop, errors="ignore", inplace=True)
     print(f"   → {len(df_raw)} lignes, {len(df_raw.columns)} colonnes")
 
@@ -261,9 +402,16 @@ def main(feature_selection_on=True, tune=False):
     print(f"🔹 Shapes — Train:{X_train.shape} Val:{X_val.shape} Test:{X_test.shape}")
 
     # 5. Class weights
-    cw_raw = compute_class_weight("balanced", classes=np.arange(N_CLASSES), y=y_train)
-    cw_dict = {c: float(cw_raw[c] * CLASS_WEIGHT_BOOST.get(c, 1.0)) for c in range(N_CLASSES)}
+    present_classes = np.unique(y_train)
+    cw_raw = compute_class_weight("balanced", classes=present_classes, y=y_train)
+    cw_dict = {c: float(w * CLASS_WEIGHT_BOOST.get(c, 1.0))
+               for c, w in zip(present_classes, cw_raw)}
     print(f"🔹 Class weights : {cw_dict}")
+
+    # 5b. Walk-forward validation
+    if walk_forward:
+        print("\n🔹 Walk-forward validation...")
+        run_walk_forward(df_main, features, cw_dict, results_dir)
 
     # 6. LightGBM
     print("\n🔹 Entraînement LightGBM...")
@@ -273,7 +421,7 @@ def main(feature_selection_on=True, tune=False):
         study = optuna.create_study(direction="maximize",
                                     sampler=optuna.samplers.TPESampler(seed=SEED))
         study.optimize(
-            lambda trial: _lgb_objective(trial, X_train, y_train, cw_dict),
+            lambda trial: _lgb_objective(trial, X_train, y_train),
             n_trials=N_TRIALS,
         )
         best_params = study.best_params
@@ -300,40 +448,59 @@ def main(feature_selection_on=True, tune=False):
         callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(period=100)],
     )
 
-    lgb_proba = lgb_model.predict_proba(X_test)
+    lgb_proba = pad_proba(lgb_model.predict_proba(X_test), lgb_model.classes_)
     lgb_pred  = lgb_model.predict(X_test)
     save_feature_importance(lgb_model, features, results_dir, "lightgbm")
     lgb_f1 = evaluate_and_save("lightgbm", y_test, lgb_pred, lgb_proba,
                                 date_test, results_dir, test_df, XGB_VERSION)
 
-    # 7. XGBoost
+    # 7. XGBoost — use native API to bypass sklearn's label-validation which rejects
+    # non-contiguous label sets (e.g. [0,2] when class 1 is absent from y_train).
     print("\n🔹 Entraînement XGBoost...")
-    # Remplace class_weight dict par sample_weight pour XGBoost
-    sample_weight = np.array([cw_dict[c] for c in y_train])
-    eval_sample_weight = np.array([cw_dict[c] for c in y_val])
+    sample_weight      = np.array([cw_dict.get(c, 1.0) for c in y_train])
+    eval_sample_weight = np.array([cw_dict.get(c, 1.0) for c in y_val])
 
-    xgb_model = xgb.XGBClassifier(
-        n_estimators=1000,
-        learning_rate=0.05,
-        max_depth=6,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        eval_metric="mlogloss",
+    dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weight)
+    dval   = xgb.DMatrix(X_val,   label=y_val,   weight=eval_sample_weight)
+    dtest  = xgb.DMatrix(X_test)
+
+    xgb_params = {
+        "objective":        "multi:softprob",
+        "num_class":        N_CLASSES,
+        "eval_metric":      "mlogloss",
+        "learning_rate":    0.05,
+        "max_depth":        6,
+        "subsample":        0.8,
+        "colsample_bytree": 0.8,
+        "seed":             SEED,
+        "verbosity":        0,
+    }
+    xgb_booster = xgb.train(
+        xgb_params,
+        dtrain,
+        num_boost_round=1000,
+        evals=[(dval, "val")],
         early_stopping_rounds=50,
-        random_state=SEED,
-        verbosity=0,
-    )
-    xgb_model.fit(
-        X_train, y_train,
-        sample_weight=sample_weight,
-        eval_set=[(X_val, y_val)],
-        sample_weight_eval_set=[eval_sample_weight],
-        verbose=100,
+        verbose_eval=100,
     )
 
-    xgb_proba = xgb_model.predict_proba(X_test)
-    xgb_pred  = xgb_model.predict(X_test)
-    save_feature_importance(xgb_model, features, results_dir, "xgboost")
+    xgb_proba = xgb_booster.predict(dtest).reshape(-1, N_CLASSES)
+    xgb_pred  = xgb_proba.argmax(axis=1)
+
+    # feature importance from booster
+    scores = xgb_booster.get_score(importance_type="gain")
+    imp = pd.DataFrame([
+        {"feature": f, "importance": scores.get(f, 0.0)} for f in features
+    ]).sort_values("importance", ascending=False)
+    imp.to_csv(os.path.join(results_dir, "xgboost_feature_importance.csv"), index=False)
+    plt.figure(figsize=(10, max(6, len(imp) * 0.3)))
+    plt.barh(imp["feature"][:30][::-1], imp["importance"][:30][::-1])
+    plt.xlabel("Importance (gain)")
+    plt.title("Top features — xgboost")
+    plt.tight_layout()
+    plt.savefig(os.path.join(results_dir, "xgboost_feature_importance.png"), dpi=150)
+    plt.close()
+
     xgb_f1 = evaluate_and_save("xgboost", y_test, xgb_pred, xgb_proba,
                                 date_test, results_dir, test_df, XGB_VERSION)
 
@@ -355,4 +522,4 @@ def main(feature_selection_on=True, tune=False):
 
 
 if __name__ == "__main__":
-    main(feature_selection_on=True, tune=True)
+    main(feature_selection_on=True, tune=True, walk_forward=True)

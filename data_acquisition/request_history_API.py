@@ -14,7 +14,7 @@ Ce fichier est utilisé comme indicateur de volatilité pour enrichir les donné
 """
 
 # Télécharger toutes les données historiques
-ticker = "^VIX"
+ticker = "XLI"
 stock = yf.Ticker(ticker)
 
 # Obtenir les données historiques (maximales disponibles)

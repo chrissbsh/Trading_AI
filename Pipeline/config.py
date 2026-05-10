@@ -24,15 +24,15 @@ TARGET_PRICE_COL = "SP500_historical_data_Close" # Column used for future return
 EXCLUDE_COLS_FROM_FEATURES = {"Date", "ret_future", "target"} # Will be updated after feature selection
 
 # ──────────────────── FEATURE SELECTION PARAMETERS ───────────────── #
-TOP_N_FEATURES = 25
+TOP_N_FEATURES = 30
 
 # ─────────────────── PREPROCESSING PARAMETERS ──────────────────── #
 PRED_HORIZON = 7  # jours, combien de pas dans le futur on veut prédire (horizon = 5 → prédire t+5 à partir de t)
 N_CLASSES = 3
 SEQUENCE_LENGTH = 90  # nombre de pas de temps utilisés pour prédire la suite
 STRIDE = 5  # réduit les séquences corrélées pour limiter l'overfitting (était 1)
-THRESHOLD_STRATEGY = "fixed" # "fixed" or "adaptive"
-FIXED_THRESHOLDS = np.array([-0.015, 0.015])  # resserré pour rééquilibrer les classes (était [-0.02, 0.02])
+THRESHOLD_STRATEGY = "adaptive"  # "fixed" ou "adaptive" (seuils proportionnels à la volatilité)
+FIXED_THRESHOLDS = np.array([-0.015, 0.015])  # base pour les deux stratégies
 
 # ──────────────── SPLIT PARAMETERS ───────────────── #
 HOLDOUT_START_DATE = "2023-01-03"
@@ -47,7 +47,7 @@ N_TRIALS = 50 # Nombre d'essais Optuna
 
 # Multiplicateurs appliqués PAR-DESSUS le class_weight 'balanced' pour renforcer les classes rares.
 # Augmenter CLASS_WEIGHT_BOOST[2] si le modèle continue à rater les hausses.
-CLASS_WEIGHT_BOOST = {0: 1.5, 1: 0.7, 2: 2.0}
+CLASS_WEIGHT_BOOST = {0: 1.2, 1: 0.8, 2: 1.5}  # moins agressif — évite le class collapse
 
 # Seuil de confiance pour la décision finale (différence top1 - top2 probabilité)
 ECART_MIN = 0.05
