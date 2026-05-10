@@ -29,7 +29,7 @@ TOP_N_FEATURES = 30
 # ─────────────────── PREPROCESSING PARAMETERS ──────────────────── #
 PRED_HORIZON = 3  # jours — optimise par grid search target_grid_search.py (h=3 meilleur Sharpe/F1)
 N_CLASSES = 3
-SEQUENCE_LENGTH = 90  # nombre de pas de temps utilisés pour prédire la suite
+SEQUENCE_LENGTH = 60  # optimise via Optuna BiLSTM (etait 90)
 STRIDE = 5  # réduit les séquences corrélées pour limiter l'overfitting (était 1)
 THRESHOLD_STRATEGY = "fixed"  # "fixed" — grid search montre que fixed est plus stable
 FIXED_THRESHOLDS = np.array([-0.008, 0.008])  # grid search: meilleur equilibre classes (24/43/33%)
@@ -42,11 +42,11 @@ HOLDOUT_END_DATE = "2025-04-14"
 EPOCHS = 200
 BATCH_SIZE = 128
 PATIENCE = 20  # réduit pour stopper l'overfitting plus tôt (était 50)
-LEARNING_RATE = 0.01
+LEARNING_RATE = 0.008  # optimise via Optuna BiLSTM (etait 0.01)
 N_TRIALS = 50 # Nombre d'essais Optuna
 
 # Multiplicateurs appliqués PAR-DESSUS le class_weight 'balanced' pour renforcer les classes rares.
-CLASS_WEIGHT_BOOST = {0: 1.2, 1: 0.8, 2: 1.5}
+CLASS_WEIGHT_BOOST = {0: 0.8, 1: 1, 2: 1.2}
 
 # Seuil de confiance pour la décision finale (différence top1 - top2 probabilité)
 ECART_MIN = 0.05
@@ -55,4 +55,4 @@ ECART_MIN = 0.05
 MODEL_SAVE_DIR = "Pipeline/model"
 PREDICTION_SAVE_DIR = "Pipeline/prediction"
 OPTUNA_DIR = "Pipeline/optuna_results"
-MODEL_VERSION = "13.1.2" # Example, can be incremented or passed as arg
+MODEL_VERSION = "14.0.0" # Example, can be incremented or passed as arg

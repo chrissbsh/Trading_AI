@@ -1,5 +1,13 @@
 import os
 import sys
+import io
+
+# Force UTF-8 output on Windows to avoid cp1252 encoding errors
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 import pandas as pd
 import numpy as np
 from pipeline.config import *
@@ -13,10 +21,10 @@ from pipeline.tf_metrics import *
 from pipeline.backtest import run_backtest
 
 from tensorflow.keras.models import Sequential # type: ignore
-from tensorflow.keras.layers import LSTM, Dense, Dropout, Input # type: ignore
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Input, BatchNormalization, Bidirectional # type: ignore
 from tensorflow.keras import regularizers # type: ignore
 from tensorflow.keras.preprocessing.sequence import TimeseriesGenerator # type: ignore
-from tensorflow.keras.callbacks import EarlyStopping # type: ignore
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau # type: ignore
 
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.metrics import classification_report, confusion_matrix, accuracy_score, f1_score, balanced_accuracy_score
@@ -171,12 +179,16 @@ def save_prediction_distribution_plot(y_true, y_pred, output_path):
 def lstm_model_v2(input_shape, n_classes):
     model = Sequential()
     model.add(Input(shape=input_shape))
-    model.add(LSTM(64, return_sequences=False,
-                   kernel_regularizer=regularizers.l2(0.05),
-                   recurrent_dropout=0.2,
-                   ))
-    model.add(Dropout(0.5))
-    model.add(Dense(32, activation='relu'))
+    # Optuna a trouvé que BiLSTM avec 128 unités au total (donc 64 par direction) 
+    # et une régularisation L2 de 0.0028 est optimal.
+    model.add(Bidirectional(LSTM(64, return_sequences=False,
+                   kernel_regularizer=regularizers.l2(0.0028))))
+    model.add(BatchNormalization())
+    model.add(Dropout(0.1))
+    # Optuna a suggéré d'utiliser une couche Dense de 64 unités
+    model.add(Dense(64, activation='relu', kernel_regularizer=regularizers.l2(0.0028)))
+    model.add(BatchNormalization())
+    model.add(Dropout(0.1))
     model.add(Dense(n_classes, activation='softmax'))
     return model
 
@@ -342,7 +354,7 @@ def main(cross_validation, debug_on, feature_selection_on):
 
             loss_fn = SparseCategoricalFocalLoss(gamma=gamma, class_weight=cw)
 
-            model.compile(optimizer='adam',
+            model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
                         loss=loss_fn,
                         metrics=metrics)
 
@@ -352,15 +364,17 @@ def main(cross_validation, debug_on, feature_selection_on):
             if debug_on:
                 print("   [DEBUG] Vérifiez l'architecture.")
 
-            # Entraînement avec early stopping basé sur F1 macro
+            # Entraînement avec early stopping et reduce LR
             early_stop = EarlyStopping(
-            monitor='val_f1_macro',   # ou 'val_balanced_accuracy'
-            mode='max',
-            patience=PATIENCE,
-            restore_best_weights=True)
+                monitor='val_f1_macro', mode='max',
+                patience=PATIENCE, restore_best_weights=True)
+            
+            reduce_lr = ReduceLROnPlateau(
+                monitor='val_loss', factor=0.5,
+                patience=int(PATIENCE/2), min_lr=1e-5, verbose=1)
 
             history_cv = model.fit(train_gen, validation_data=val_gen, epochs=EPOCHS,
-                                   callbacks=[early_stop], verbose=1)
+                                   callbacks=[early_stop, reduce_lr], verbose=1)
 
             save_training_artifacts(history_cv, results_dir, f"cv_fold_{fold+1}")
             
@@ -500,7 +514,7 @@ def main(cross_validation, debug_on, feature_selection_on):
     gamma = 2.0
     loss_fn = SparseCategoricalFocalLoss(gamma=gamma, class_weight=cw_f)
 
-    final_model.compile(optimizer='adam',
+    final_model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=LEARNING_RATE),
                         loss=loss_fn,
                         metrics=metrics)
 
@@ -509,11 +523,15 @@ def main(cross_validation, debug_on, feature_selection_on):
         mode='max',
         patience=PATIENCE,
         restore_best_weights=True)
+        
+    reduce_lr = ReduceLROnPlateau(
+        monitor='val_loss', factor=0.5,
+        patience=int(PATIENCE/2), min_lr=1e-5, verbose=1)
 
     history_final = final_model.fit(gen_train,
                                     validation_data=gen_val,
                                     epochs=EPOCHS,
-                                    callbacks=[early_stop], verbose=1)
+                                    callbacks=[early_stop, reduce_lr], verbose=1)
 
     save_training_artifacts(history_final, results_dir, "final_train", save_history_csv=True)
 
@@ -646,7 +664,6 @@ def main(cross_validation, debug_on, feature_selection_on):
 if __name__ == "__main__":
     cross_validation = False  # False pour pipeline complet sans CV
     debug_on = False
-
     feature_selection_on = True # True avec feature selection, False sans
 
     print(f"\n--- Lancement pipeline version : {MODEL_VERSION} ---")
