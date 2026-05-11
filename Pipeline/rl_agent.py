@@ -204,6 +204,9 @@ class TradingEnv(gym.Env):
     """
     Environnement Gymnasium pour trading S&P500 guidé par signal LightGBM.
 
+    Pas de temps = PRED_HORIZON jours : l'agent décide UNE FOIS par fenêtre de trade.
+    Cela élimine structurellement le double-comptage des positions chevauchantes.
+
     Observation (8 dimensions) :
         [proba_0, proba_1, proba_2,   ← probas LightGBM calibrées
          position_norm,               ← position courante normalisée (-1/0/1)
@@ -212,8 +215,7 @@ class TradingEnv(gym.Env):
 
     Action space : Discrete(3) → {0: short, 1: flat, 2: long}
 
-    Reward : rendement net du trade sur PRED_HORIZON jours,
-             avec pénalité de changement de position (coût transaction).
+    Reward : rendement du trade sur PRED_HORIZON jours (sans chevauchement possible).
     """
 
     metadata = {"render_modes": []}
@@ -224,7 +226,10 @@ class TradingEnv(gym.Env):
                  confidence_bonus: float = 0.3,
                  confidence_threshold: float = 0.05):
         super().__init__()
-        self.preds                = predictions_df.reset_index(drop=True)
+        # Sous-échantillonne les prédictions toutes les PRED_HORIZON lignes
+        # pour qu'un pas de temps = une fenêtre de trade non-chevauchante.
+        raw = predictions_df.reset_index(drop=True)
+        self.preds                = raw.iloc[::pred_horizon].reset_index(drop=True)
         self.prices               = price_series
         self.horizon              = pred_horizon
         self.tc                   = transaction_cost
@@ -241,8 +246,8 @@ class TradingEnv(gym.Env):
         )
         self.action_space = spaces.Discrete(3)
 
-        self._step_idx   = 0
-        self._position   = 1  # neutre au départ
+        self._step_idx    = 0
+        self._position    = 1  # neutre au départ
         self._last_action = 1
 
     def _precompute_market_features(self):
@@ -322,7 +327,7 @@ class TradingEnv(gym.Env):
         trade_ret = self._compute_trade_return(action)
         row = self.preds.iloc[self._step_idx]
 
-        # Reward = rendement brut du trade
+        # Reward = rendement brut du trade (un pas = une fenêtre PRED_HORIZON, pas de chevauchement)
         reward = trade_ret
 
         # Bonus si l'agent trade et que le signal est confiant
@@ -381,69 +386,145 @@ def train_rl_agent(env: TradingEnv, total_timesteps: int = 200_000,
 # ──────────────────────────────────────────────────────────────────────
 
 def evaluate_rl_agent(model: PPO, env: TradingEnv, output_dir: str) -> pd.DataFrame:
-    """Rejoue l'agent de façon déterministe et calcule les métriques de backtest."""
+    """
+    Rejoue l'agent de façon déterministe et calcule les métriques de backtest.
+
+    Correction chevauchement : une seule position ouverte à la fois.
+    Quand un trade est ouvert (action != 1), le prochain trade ne peut démarrer
+    qu'après PRED_HORIZON jours — les signaux intermédiaires sont ignorés.
+    Le P&L de chaque trade est enregistré à la date d'ENTRÉE (pas d'exit).
+    """
     print("\n🔹 Évaluation de l'agent RL...")
     os.makedirs(output_dir, exist_ok=True)
 
+    # Collecte de toutes les décisions de l'agent (sans filtrage)
     obs, _ = env.reset()
-    records = []
-    cumulative = 1.0
-
+    raw_records = []
     while True:
         action, _ = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, info = env.step(int(action))
-        trade_ret = info["trade_return"]
-        cumulative *= (1.0 + trade_ret)
-        records.append({
-            "date_prediction":  info["date"],
-            "action_rl":        int(action),
-            "trade_return":     trade_ret,
-            "cumulative_return": cumulative,
+        obs, _, terminated, truncated, info = env.step(int(action))
+        raw_records.append({
+            "date_prediction": info["date"],
+            "action_rl":       int(action),
+            "trade_return":    info["trade_return"],
         })
         if terminated or truncated:
             break
 
-    res_df = pd.DataFrame(records)
+    raw_df = pd.DataFrame(raw_records)
+    raw_df["date_prediction"] = pd.to_datetime(raw_df["date_prediction"])
 
-    # Fusion avec les prédictions LightGBM pour conserver y_true / y_pred_lgbm
+    # Fusion avec les prédictions LightGBM (env.preds est déjà sous-échantillonné)
     preds = env.preds[["date_prediction", "y_true", "y_pred"]].copy()
-    preds["date_prediction"] = preds["date_prediction"].astype(str)
-    res_df = res_df.merge(preds, on="date_prediction", how="left")
-    res_df.rename(columns={"y_pred": "y_pred_lgbm"}, inplace=True)
+    raw_df = raw_df.merge(preds, on="date_prediction", how="left")
+    raw_df.rename(columns={"y_pred": "y_pred_lgbm"}, inplace=True)
 
-    n_trades   = int((res_df["action_rl"] != 1).sum())
-    total_ret  = float(res_df["cumulative_return"].iloc[-1] - 1.0)
-    active     = res_df[res_df["action_rl"] != 1]["trade_return"]
-    win_rate   = float((active > 0).mean()) if len(active) else 0.0
-    daily_r    = res_df["trade_return"]
-    sharpe     = float(daily_r.mean() / daily_r.std() * np.sqrt(252)) if daily_r.std() > 0 else 0.0
+    # Chaque ligne = une fenêtre de PRED_HORIZON jours non-chevauchante.
+    # Pas de cooldown nécessaire : le sous-échantillonnage dans TradingEnv garantit
+    # qu'il n'y a qu'un seul trade actif à la fois.
+    raw_df["action_executed"]       = raw_df["action_rl"]
+    raw_df["trade_return_executed"] = raw_df["trade_return"]
+
+    # Rendement cumulé — chaque trade représente PRED_HORIZON jours de capital investi
+    cumulative = 1.0
+    cum_curve = []
+    for r in raw_df["trade_return_executed"]:
+        cumulative *= (1.0 + r)
+        cum_curve.append(cumulative)
+    raw_df["cumulative_return"] = cum_curve
+
+    res_df = raw_df.copy()
+
+    n_trades  = int((res_df["action_executed"] != 1).sum())
+    total_ret = float(res_df["cumulative_return"].iloc[-1] - 1.0)
+    active    = res_df[res_df["action_executed"] != 1]["trade_return_executed"]
+    win_rate  = float((active > 0).mean()) if len(active) else 0.0
+    # Sharpe annualisé : chaque pas = PRED_HORIZON jours de trading
+    periods_per_year = 252 / PRED_HORIZON
+    r_arr   = res_df["trade_return_executed"].values
+    sharpe  = float(r_arr.mean() / r_arr.std() * np.sqrt(periods_per_year)) if r_arr.std() > 0 else 0.0
     rolling_mx = res_df["cumulative_return"].cummax()
     max_dd     = float(((res_df["cumulative_return"] - rolling_mx) / rolling_mx).min())
 
+    # Buy-and-hold SP500 sur la même période (prix aux mêmes dates d'entrée de trade)
+    dates = pd.to_datetime(res_df["date_prediction"])
+    sp500 = env.prices
+    first_p = sp500.asof(dates.iloc[0])
+    last_exit = dates.iloc[-1] + pd.offsets.BusinessDay(PRED_HORIZON)
+    last_p = sp500.asof(last_exit)
+    bh_ret = float((last_p - first_p) / first_p) if not pd.isna(last_p) and first_p > 0 else 0.0
+    # Courbe B&H aux mêmes points que le bot pour le graphique
+    bh_curve = pd.Series(
+        [sp500.asof(d) / first_p if not pd.isna(sp500.asof(d)) else np.nan for d in dates],
+        index=dates,
+    )
+    bh_r      = bh_curve.pct_change().fillna(0.0)
+    bh_sharpe = float(bh_r.mean() / bh_r.std() * np.sqrt(periods_per_year)) if bh_r.std() > 0 else 0.0
+
     print("\n===== BACKTEST RL — PPO =====")
     print(f"   Nombre de trades (hors flat) : {n_trades}")
-    print(f"   Rendement cumulé             : {total_ret*100:.2f}%")
+    print(f"   Rendement bot                : {total_ret*100:.2f}%")
+    print(f"   Rendement buy-and-hold       : {bh_ret*100:.2f}%")
     print(f"   Win rate                     : {win_rate*100:.1f}%")
-    print(f"   Sharpe ratio (annualisé)     : {sharpe:.2f}")
+    print(f"   Sharpe bot                   : {sharpe:.2f}")
+    print(f"   Sharpe buy-and-hold          : {bh_sharpe:.2f}")
     print(f"   Max Drawdown                 : {max_dd*100:.2f}%")
 
-    res_df.to_csv(os.path.join(output_dir, "backtest_results.csv"), index=False)
+    # Colonnes à sauvegarder : on garde action_rl (décision agent) + action_executed (réel)
+    out_cols = ["date_prediction", "action_rl", "action_executed",
+                "trade_return_executed", "cumulative_return", "y_true", "y_pred_lgbm"]
+    res_df[out_cols].to_csv(os.path.join(output_dir, "backtest_results.csv"), index=False)
     pd.DataFrame([{
         "n_trades":     n_trades,
         "total_return": total_ret,
+        "bh_return":    bh_ret,
         "win_rate":     win_rate,
         "sharpe_ratio": sharpe,
+        "bh_sharpe":    bh_sharpe,
         "max_drawdown": max_dd,
     }]).to_csv(os.path.join(output_dir, "backtest_metrics.csv"), index=False)
 
-    # Courbe d'équité
-    plt.figure(figsize=(12, 4))
-    plt.plot(range(len(res_df)), res_df["cumulative_return"], label="Agent RL (PPO)")
-    plt.axhline(1.0, color="gray", linestyle="--", alpha=0.5)
-    plt.title("Backtest RL — Rendement cumulé")
-    plt.xlabel("Pas de temps")
-    plt.ylabel("Rendement cumulé")
-    plt.legend()
+    # ── Graphique 1 : signaux exécutés long/short sur le cours SP500 ──
+    fig, ax = plt.subplots(figsize=(14, 5))
+    # Courbe SP500 complète sur la période du backtest
+    period_sp500 = sp500.loc[dates.iloc[0]:dates.iloc[-1] + pd.offsets.BusinessDay(PRED_HORIZON)]
+    ax.plot(period_sp500.index, period_sp500.values,
+            color="steelblue", linewidth=1, label="SP500", zorder=1)
+
+    longs  = res_df[res_df["action_executed"] == 2]
+    shorts = res_df[res_df["action_executed"] == 0]
+    long_dates   = pd.to_datetime(longs["date_prediction"])
+    short_dates  = pd.to_datetime(shorts["date_prediction"])
+    long_prices  = [sp500.asof(d) for d in long_dates]
+    short_prices = [sp500.asof(d) for d in short_dates]
+
+    ax.scatter(long_dates,  long_prices,  marker="^", color="limegreen",
+               s=80, zorder=3, label=f"Long ({len(longs)})")
+    ax.scatter(short_dates, short_prices, marker="v", color="tomato",
+               s=80, zorder=3, label=f"Short ({len(shorts)})")
+
+    ax.set_title("Signaux RL executés — Long / Short sur SP500")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Prix SP500")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(output_dir, "signals_on_sp500.png"), dpi=150)
+    plt.close()
+
+    # ── Graphique 2 : bot vs buy-and-hold (rendement cumulé) ─────────
+    fig, ax = plt.subplots(figsize=(14, 4))
+    ax.plot(dates, res_df["cumulative_return"].values,
+            color="darkorange", linewidth=1.5, label=f"Agent RL  {total_ret*100:+.1f}%")
+    ax.plot(dates, bh_curve.values,
+            color="steelblue", linewidth=1.5, linestyle="--",
+            label=f"Buy & Hold  {bh_ret*100:+.1f}%")
+    ax.axhline(1.0, color="gray", linestyle=":", alpha=0.5)
+    ax.set_title("Agent RL vs Buy-and-Hold SP500")
+    ax.set_xlabel("Date")
+    ax.set_ylabel("Rendement cumulé")
+    ax.legend()
+    ax.grid(alpha=0.3)
     plt.tight_layout()
     plt.savefig(os.path.join(output_dir, "equity_curve.png"), dpi=150)
     plt.close()
@@ -456,7 +537,8 @@ def evaluate_rl_agent(model: PPO, env: TradingEnv, output_dir: str) -> pd.DataFr
 # ──────────────────────────────────────────────────────────────────────
 
 def _evaluate_sharpe(model: PPO, env: TradingEnv) -> tuple[float, int]:
-    """Évalue un modèle PPO et retourne (sharpe, n_trades)."""
+    """Évalue un modèle PPO et retourne (sharpe, n_trades).
+    Le sous-échantillonnage dans TradingEnv garantit qu'il n'y a pas de chevauchement."""
     obs, _ = env.reset()
     returns, n_trades = [], 0
     while True:
@@ -469,7 +551,8 @@ def _evaluate_sharpe(model: PPO, env: TradingEnv) -> tuple[float, int]:
         if terminated or truncated:
             break
     r = np.array(returns)
-    sharpe = float(r.mean() / r.std() * np.sqrt(252)) if r.std() > 0 else 0.0
+    periods_per_year = 252 / PRED_HORIZON
+    sharpe = float(r.mean() / r.std() * np.sqrt(periods_per_year)) if r.std() > 0 else 0.0
     return sharpe, n_trades
 
 
