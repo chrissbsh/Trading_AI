@@ -51,6 +51,13 @@ CLASS_WEIGHT_BOOST = {0: 0.8, 1: 1, 2: 1.2}
 # Seuil de confiance pour la décision finale (différence top1 - top2 probabilité)
 ECART_MIN = 0.05
 
+# Seuils de décision asymétriques par classe après calibration isotonic.
+# On prédit la classe i seulement si proba_i >= DECISION_THRESHOLDS[i],
+# sinon on tombe sur la classe avec la plus haute proba parmi celles qui passent,
+# et si aucune ne passe → classe 1 (neutre/flat).
+# None désactive les seuils asymétriques (argmax classique).
+DECISION_THRESHOLDS = {0: 0.38, 1: 0.28, 2: 0.38}
+
 # ───────────────────── OUTPUT PARAMETERS ────────────────────── #
 MODEL_SAVE_DIR = "Pipeline/model"
 PREDICTION_SAVE_DIR = "Pipeline/prediction"

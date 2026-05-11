@@ -1,0 +1,42 @@
+{
+  "run_id": "xgb_baseline_v1_20260511_161027",
+  "timestamp": "2026-05-11 16:12:53",
+  "pipeline": {
+    "pred_horizon": 3,
+    "threshold_strategy": "fixed",
+    "fixed_thresholds": [
+      -0.008,
+      0.008
+    ],
+    "sequence_length": 60,
+    "top_n_features": 30,
+    "class_weight_boost": {
+      "0": 0.8,
+      "1": 1,
+      "2": 1.2
+    },
+    "ecart_min": 0.05,
+    "holdout_start": "2023-01-03",
+    "holdout_end": "2025-04-14",
+    "model_version": "14.0.0"
+  },
+  "run_flags": {
+    "feature_selection_on": true,
+    "tune": true,
+    "walk_forward": true,
+    "lag_features": true,
+    "time_weighting": true,
+    "run_xgboost": false
+  },
+  "lightgbm_best_params": {
+    "n_estimators": 1003,
+    "learning_rate": 0.13445315357523477,
+    "max_depth": 9,
+    "num_leaves": 36,
+    "min_child_samples": 16,
+    "subsample": 0.7530152681269622,
+    "colsample_bytree": 0.5099956605529067,
+    "reg_alpha": 1.4379665700005002,
+    "reg_lambda": 0.0002507584613606415
+  }
+}

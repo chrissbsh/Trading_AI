@@ -55,7 +55,15 @@ def load_run(run_dir: str, model: str) -> dict | None:
     holdout_path = os.path.join(sub, "holdout_metrics.csv")
     if not os.path.exists(holdout_path):
         return None
-    hm = pd.read_csv(holdout_path).iloc[0]
+    hm_df = pd.read_csv(holdout_path)
+    # Préfère la ligne "calibrated" si elle existe, sinon "raw" ou première ligne
+    if "variant" in hm_df.columns and "calibrated" in hm_df["variant"].values:
+        hm = hm_df[hm_df["variant"] == "calibrated"].iloc[0]
+        hm_raw = hm_df[hm_df["variant"] == "raw"].iloc[0]
+        row["f1_macro_raw"] = round(hm_raw.get("f1_macro", float("nan")), 4)
+        row["bal_acc_raw"]  = round(hm_raw.get("balanced_accuracy", float("nan")), 4)
+    else:
+        hm = hm_df.iloc[0]
     row["accuracy"]     = round(hm.get("accuracy", float("nan")), 4)
     row["bal_acc"]      = round(hm.get("balanced_accuracy", float("nan")), 4)
     row["f1_macro"]     = round(hm.get("f1_macro", float("nan")), 4)
@@ -133,7 +141,8 @@ def print_table(df: pd.DataFrame, show_wf: bool, show_config: bool) -> None:
     # Colonnes à afficher selon les options
     core_cols = [
         "run_id", "timestamp",
-        "bal_acc", "f1_macro", "recall_c0", "recall_c1", "recall_c2",
+        "bal_acc", "f1_macro", "bal_acc_raw", "f1_macro_raw",
+        "recall_c0", "recall_c1", "recall_c2",
         "n_trades", "return_pct", "win_rate", "sharpe", "max_dd",
     ]
     config_cols = [

@@ -21,6 +21,7 @@ import optuna
 from sklearn.utils.class_weight import compute_class_weight
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.metrics import (
     classification_report, confusion_matrix,
     accuracy_score, f1_score, balanced_accuracy_score,
@@ -196,50 +197,96 @@ def save_feature_importance(model, feature_names, output_dir, model_name):
         plt.close()
 
 
+def calibrate_and_threshold(model, X_cal, y_cal, X_test, thresholds=None):
+    """
+    Calibre les probabilités (isotonic regression sur X_cal/y_cal),
+    puis applique des seuils asymétriques par classe.
+
+    thresholds : dict {classe: seuil_min} ou None (argmax classique).
+    Retourne (proba_calibrée, y_pred_final).
+    """
+    cal_model = CalibratedClassifierCV(model, method="isotonic", cv="prefit")
+    cal_model.fit(X_cal, y_cal)
+    proba_cal = pad_proba(cal_model.predict_proba(X_test), cal_model.classes_)
+
+    if thresholds is None:
+        return proba_cal, proba_cal.argmax(axis=1)
+
+    n = proba_cal.shape[0]
+    preds = np.ones(n, dtype=int)  # défaut → classe 1 (neutre)
+    for i in range(n):
+        best_cls, best_p = -1, -1.0
+        for cls in range(N_CLASSES):
+            p = proba_cal[i, cls]
+            thr = thresholds.get(cls, 0.0)
+            if p >= thr and p > best_p:
+                best_cls, best_p = cls, p
+        if best_cls != -1:
+            preds[i] = best_cls
+    return proba_cal, preds
+
+
 def evaluate_and_save(model_name, y_true, y_pred, proba, date_index,
-                      results_dir, test_df, version):
-    acc  = accuracy_score(y_true, y_pred)
-    bal  = balanced_accuracy_score(y_true, y_pred)
-    f1m  = f1_score(y_true, y_pred, average="macro", zero_division=0)
-    f1w  = f1_score(y_true, y_pred, average="weighted", zero_division=0)
-
-    print(f"\n===== HOLDOUT — {model_name} =====")
-    print(f"   Accuracy        : {acc:.4f}")
-    print(f"   Balanced Acc.   : {bal:.4f}")
-    print(f"   F1-Macro        : {f1m:.4f}")
-    print(f"   F1-Weighted     : {f1w:.4f}")
-    print(classification_report(y_true, y_pred, zero_division=0))
-
+                      results_dir, test_df, version,
+                      y_pred_cal=None, proba_cal=None):
+    """
+    Évalue et sauvegarde les résultats holdout.
+    Si y_pred_cal/proba_cal fournis, sauvegarde aussi les métriques calibrées
+    et lance le backtest sur les prédictions calibrées.
+    """
     sub = os.path.join(results_dir, model_name)
     os.makedirs(sub, exist_ok=True)
 
-    pd.DataFrame([{
-        "model_version": version,
-        "ecart_min": "n/a",
-        "accuracy": acc,
-        "balanced_accuracy": bal,
-        "f1_macro": f1m,
-        "f1_weighted": f1w,
-        "n_holdout_samples": len(y_true),
-    }]).to_csv(os.path.join(sub, "holdout_metrics.csv"), index=False)
+    def _metrics_row(yt, yp, tag):
+        return {
+            "variant": tag,
+            "model_version": version,
+            "accuracy": accuracy_score(yt, yp),
+            "balanced_accuracy": balanced_accuracy_score(yt, yp),
+            "f1_macro": f1_score(yt, yp, average="macro", zero_division=0),
+            "f1_weighted": f1_score(yt, yp, average="weighted", zero_division=0),
+            "n_holdout_samples": len(yt),
+        }
 
-    classif_dict = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+    rows = [_metrics_row(y_true, y_pred, "raw")]
+    if y_pred_cal is not None:
+        rows.append(_metrics_row(y_true, y_pred_cal, "calibrated"))
+
+    # Affichage console — version principale (calibrée si dispo, sinon brute)
+    y_show = y_pred_cal if y_pred_cal is not None else y_pred
+    tag_show = "calibrated" if y_pred_cal is not None else "raw"
+    r = rows[-1]
+    print(f"\n===== HOLDOUT — {model_name} [{tag_show}] =====")
+    print(f"   Accuracy        : {r['accuracy']:.4f}")
+    print(f"   Balanced Acc.   : {r['balanced_accuracy']:.4f}")
+    print(f"   F1-Macro        : {r['f1_macro']:.4f}")
+    print(f"   F1-Weighted     : {r['f1_weighted']:.4f}")
+    print(classification_report(y_true, y_show, zero_division=0))
+    if y_pred_cal is not None:
+        r_raw = rows[0]
+        print(f"   [raw]  BalAcc={r_raw['balanced_accuracy']:.4f}  F1={r_raw['f1_macro']:.4f}")
+
+    pd.DataFrame(rows).to_csv(os.path.join(sub, "holdout_metrics.csv"), index=False)
+
+    classif_dict = classification_report(y_true, y_show, output_dict=True, zero_division=0)
     pd.DataFrame(classif_dict).transpose().to_csv(
         os.path.join(sub, "classification_report.csv"))
 
-    cm = confusion_matrix(y_true, y_pred)
+    cm = confusion_matrix(y_true, y_show)
     save_confusion_matrix_plot(cm, os.path.join(sub, "confusion_matrix.png"))
-    save_prediction_distribution_plot(y_true, y_pred,
+    save_prediction_distribution_plot(y_true, y_show,
         os.path.join(sub, "class_distribution_true_vs_pred.png"))
 
-    sorted_proba = np.sort(proba, axis=1)[:, ::-1]
+    # Backtest sur la version calibrée si dispo, sinon brute
+    p_use = proba_cal if proba_cal is not None else proba
+    sorted_proba = np.sort(p_use, axis=1)[:, ::-1]
     pred_df = pd.DataFrame({
         "date_prediction": pd.to_datetime(date_index),
         "y_true": y_true,
-        "y_pred": y_pred,
-        "proba_0": proba[:, 0],
-        "proba_1": proba[:, 1],
-        "proba_2": proba[:, 2],
+        "y_pred": y_show,
+        "proba_0": p_use[:, 0],
+        "proba_1": p_use[:, 1],
+        "proba_2": p_use[:, 2],
         "top_proba": sorted_proba[:, 0],
         "second_proba": sorted_proba[:, 1],
         "confidence_gap": sorted_proba[:, 0] - sorted_proba[:, 1],
@@ -249,7 +296,7 @@ def evaluate_and_save(model_name, y_true, y_pred, proba, date_index,
     price_series = test_df.set_index(DATE_COL)[TARGET_PRICE_COL]
     run_backtest(pred_df, price_series, sub)
 
-    return f1m
+    return r["f1_macro"]
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -586,8 +633,17 @@ def main(feature_selection_on=True, tune=False, walk_forward=False,
     lgb_proba = pad_proba(lgb_model.predict_proba(X_test), lgb_model.classes_)
     lgb_pred  = lgb_model.predict(X_test)
     save_feature_importance(lgb_model, features, results_dir, "lightgbm")
+
+    # Calibration isotonic + seuils asymétriques (sur X_val comme ensemble de calibration)
+    thresholds = DECISION_THRESHOLDS if hasattr(DECISION_THRESHOLDS, "__getitem__") else None
+    print("🔹 Calibration isotonic des probabilités...")
+    lgb_proba_cal, lgb_pred_cal = calibrate_and_threshold(
+        lgb_model, X_val, y_val, X_test, thresholds=thresholds
+    )
+
     lgb_f1 = evaluate_and_save("lightgbm", y_test, lgb_pred, lgb_proba,
-                                date_test, results_dir, test_df, XGB_VERSION)
+                                date_test, results_dir, test_df, XGB_VERSION,
+                                y_pred_cal=lgb_pred_cal, proba_cal=lgb_proba_cal)
 
     # 7. XGBoost (optionnel — désactivé par défaut, run_xgboost=False)
     xgb_f1 = None
@@ -654,4 +710,4 @@ def main(feature_selection_on=True, tune=False, walk_forward=False,
 
 if __name__ == "__main__":
     main(feature_selection_on=True, tune=True, walk_forward=True,
-         lag_features=True, time_weighting=False)
+         lag_features=True, time_weighting=True, run_xgboost=False)
