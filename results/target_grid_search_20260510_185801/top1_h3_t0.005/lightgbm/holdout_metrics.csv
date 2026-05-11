@@ -1,0 +1,2 @@
+model,combo,accuracy,balanced_accuracy,f1_macro,f1_weighted,n_holdout
+LightGBM,h3_t0.005,0.3858407079646018,0.3416666666666666,0.2872284878863826,0.3269817242220596,565

@@ -1,0 +1,4 @@
+horizon,threshold,n_samples,n_classes,pct_class0,pct_class1,pct_class2,balance_score,autocorr_lag1,persistence_score,mean_kl,max_kl,rank_balance,rank_persistence,rank_stability,composite_rank
+3,0.005,4199,3,0.2984,0.277,0.4246,0.2492,0.541,0.241,0.0095,0.022,15.0,8.0,5.0,28.0
+5,0.01,4197,3,0.2373,0.4127,0.35,0.1254,0.6592,0.3592,0.0134,0.0319,2.0,14.0,19.0,35.0
+5,0.008,4197,3,0.2616,0.3462,0.3922,0.1844,0.6645,0.3645,0.012,0.0284,7.0,15.0,14.0,36.0

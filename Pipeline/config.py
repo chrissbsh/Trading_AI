@@ -43,7 +43,7 @@ EPOCHS = 200
 BATCH_SIZE = 128
 PATIENCE = 20  # réduit pour stopper l'overfitting plus tôt (était 50)
 LEARNING_RATE = 0.008  # optimise via Optuna BiLSTM (etait 0.01)
-N_TRIALS = 50 # Nombre d'essais Optuna
+N_TRIALS = 150
 
 # Multiplicateurs appliqués PAR-DESSUS le class_weight 'balanced' pour renforcer les classes rares.
 CLASS_WEIGHT_BOOST = {0: 0.8, 1: 1, 2: 1.2}

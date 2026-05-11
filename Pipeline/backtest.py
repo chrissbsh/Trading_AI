@@ -17,10 +17,22 @@ def run_backtest(pred_df, price_series, output_dir):
     price = price_series.copy()
     price.index = pd.to_datetime(price.index)
 
+    # Filtre de confiance : si le gap top1-top2 < ECART_MIN → flat
+    if "confidence_gap" in df.columns:
+        df["signal_filtered"] = df.apply(
+            lambda r: r["y_pred"] if r["confidence_gap"] >= ECART_MIN else 1, axis=1
+        )
+    else:
+        df["signal_filtered"] = df["y_pred"]
+
+    n_filtered = (df["signal_filtered"] != df["y_pred"]).sum()
+    if n_filtered > 0:
+        print(f"   → {n_filtered} trades filtrés par ECART_MIN={ECART_MIN:.2f}")
+
     returns = []
     for _, row in df.iterrows():
         entry_date = row["date_prediction"]
-        signal = row["y_pred"]
+        signal = row["signal_filtered"]
         if signal == 1:
             returns.append(0.0)
             continue
@@ -39,9 +51,9 @@ def run_backtest(pred_df, price_series, output_dir):
     df["trade_return"] = returns
     df["cumulative_return"] = (1 + df["trade_return"]).cumprod()
 
-    n_trades = (df["y_pred"] != 1).sum()
+    n_trades = (df["signal_filtered"] != 1).sum()
     total_return = df["cumulative_return"].iloc[-1] - 1 if len(df) else 0.0
-    win_rate = (df.loc[df["y_pred"] != 1, "trade_return"] > 0).mean() if n_trades else 0.0
+    win_rate = (df.loc[df["signal_filtered"] != 1, "trade_return"] > 0).mean() if n_trades else 0.0
     daily_ret = df["trade_return"]
     sharpe = (daily_ret.mean() / daily_ret.std() * np.sqrt(252)) if daily_ret.std() > 0 else 0.0
     rolling_max = df["cumulative_return"].cummax()
@@ -54,7 +66,7 @@ def run_backtest(pred_df, price_series, output_dir):
     print(f"   Sharpe ratio (annualisé)        : {sharpe:.2f}")
     print(f"   Max Drawdown                    : {drawdown*100:.2f}%")
 
-    backtest_df = df[["date_prediction", "y_true", "y_pred", "trade_return", "cumulative_return"]]
+    backtest_df = df[["date_prediction", "y_true", "y_pred", "signal_filtered", "trade_return", "cumulative_return"]]
     backtest_df.to_csv(os.path.join(output_dir, "backtest_results.csv"), index=False)
 
     backtest_metrics = pd.DataFrame([{

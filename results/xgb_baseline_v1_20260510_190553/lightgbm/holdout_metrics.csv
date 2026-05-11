@@ -1,0 +1,2 @@
+model_version,ecart_min,accuracy,balanced_accuracy,f1_macro,f1_weighted,n_holdout_samples
+xgb_baseline_v1,n/a,0.4424778761061947,0.3333333333333333,0.20449897750511248,0.271458819697052,565

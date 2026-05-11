@@ -1,0 +1,2 @@
+model,combo,accuracy,balanced_accuracy,f1_macro,f1_weighted,n_holdout
+XGBoost,h3_t0.005,0.2991150442477876,0.3368037634408602,0.21738328513029767,0.20693246356896108,565

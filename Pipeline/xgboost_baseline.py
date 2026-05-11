@@ -1,6 +1,7 @@
 import os
 import sys
 import io
+import json
 
 # Force UTF-8 output on Windows to avoid cp1252 encoding errors
 if sys.stdout.encoding != 'utf-8':
@@ -35,6 +36,7 @@ random.seed(SEED)
 np.random.seed(SEED)
 
 
+
 # ──────────────────────────────────────────────────────────────────────
 # Helpers partagés avec le LSTM (dupliqués pour autonomie du script)
 # ──────────────────────────────────────────────────────────────────────
@@ -47,6 +49,35 @@ def create_results_dir():
     run_dir = os.path.join(results_root, run_id)
     os.makedirs(run_dir, exist_ok=True)
     return run_dir
+
+
+def save_run_config(results_dir, run_params, best_lgb_params=None):
+    """Sauvegarde la config complète du run : paramètres pipeline + hyperparamètres modèle."""
+    config = {
+        "run_id": os.path.basename(results_dir),
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        # Paramètres pipeline (depuis config.py)
+        "pipeline": {
+            "pred_horizon": PRED_HORIZON,
+            "threshold_strategy": THRESHOLD_STRATEGY,
+            "fixed_thresholds": list(FIXED_THRESHOLDS),
+            "sequence_length": SEQUENCE_LENGTH,
+            "top_n_features": TOP_N_FEATURES,
+            "class_weight_boost": CLASS_WEIGHT_BOOST,
+            "ecart_min": ECART_MIN,
+            "holdout_start": HOLDOUT_START_DATE,
+            "holdout_end": HOLDOUT_END_DATE,
+            "model_version": MODEL_VERSION,
+        },
+        # Paramètres d'exécution (flags passés à main())
+        "run_flags": run_params,
+        # Meilleurs hyperparamètres LightGBM trouvés par Optuna (None si tune=False)
+        "lightgbm_best_params": best_lgb_params,
+    }
+    path = os.path.join(results_dir, "run_config.json")
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, ensure_ascii=False)
+    print(f"🔹 Config run sauvegardée : {path}")
 
 
 def create_target(df, tag=""):
@@ -79,6 +110,25 @@ def create_target(df, tag=""):
 
     print("   → Distribution classes :", df["target"].value_counts(normalize=True).to_dict())
     return df
+
+
+def add_lag_features(df, features, lags=(1, 5, 21)):
+    """
+    Ajoute des features décalées (lag) pour capturer la dynamique temporelle.
+    Équivalent léger de la mémoire LSTM, sans la complexité d'architecture.
+    Retourne le df enrichi et la liste des colonnes features mise à jour.
+    """
+    df = df.copy()
+    new_cols = []
+    for feat in features:
+        if feat not in df.columns:
+            continue
+        for lag in lags:
+            col_name = f"{feat}_lag{lag}"
+            df[col_name] = df[feat].shift(lag)
+            new_cols.append(col_name)
+    df.dropna(subset=new_cols, inplace=True)
+    return df, features + new_cols
 
 
 def pad_proba(proba, model_classes, n_classes=N_CLASSES):
@@ -208,16 +258,21 @@ def evaluate_and_save(model_name, y_true, y_pred, proba, date_index,
 
 def _lgb_objective(trial, X, y):
     params = {
-        "n_estimators": trial.suggest_int("n_estimators", 200, 2000),
-        "learning_rate": trial.suggest_float("learning_rate", 0.005, 0.2, log=True),
-        "max_depth": trial.suggest_int("max_depth", 3, 10),
-        "num_leaves": trial.suggest_int("num_leaves", 15, 127),
-        "min_child_samples": trial.suggest_int("min_child_samples", 10, 100),
-        "subsample": trial.suggest_float("subsample", 0.5, 1.0),
-        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
-        "reg_alpha": trial.suggest_float("reg_alpha", 1e-4, 10.0, log=True),
-        "reg_lambda": trial.suggest_float("reg_lambda", 1e-4, 10.0, log=True),
+        # Axe A : max_depth >= 5 pour éviter les arbres trop faibles (depth=3 crée un biais classe unique)
+        # Axe D : plages resserrées autour des meilleurs runs connus (n_est~1300, lr~0.05-0.17, depth=5-8)
+        "n_estimators":      trial.suggest_int("n_estimators", 800, 2000),
+        "learning_rate":     trial.suggest_float("learning_rate", 0.02, 0.2, log=True),
+        "max_depth":         trial.suggest_int("max_depth", 5, 9),
+        "num_leaves":        trial.suggest_int("num_leaves", 20, 80),
+        "min_child_samples": trial.suggest_int("min_child_samples", 10, 60),
+        "subsample":         trial.suggest_float("subsample", 0.5, 1.0),
+        "colsample_bytree":  trial.suggest_float("colsample_bytree", 0.5, 1.0),
+        "reg_alpha":         trial.suggest_float("reg_alpha", 1e-4, 5.0, log=True),
+        "reg_lambda":        trial.suggest_float("reg_lambda", 1e-4, 5.0, log=True),
         "random_state": SEED,
+        "deterministic": True,
+        "force_col_wise": True,
+        "n_jobs": 1,
         "verbosity": -1,
     }
     tscv = TimeSeriesSplit(n_splits=3)
@@ -235,7 +290,13 @@ def _lgb_objective(trial, X, y):
               callbacks=[lgb.early_stopping(30, verbose=False),
                          lgb.log_evaluation(period=-1)])
         preds = m.predict(X_vl)
-        scores.append(f1_score(y_vl, preds, average="macro", zero_division=0))
+        f1m = f1_score(y_vl, preds, average="macro", zero_division=0)
+        # Axe A : pénalise si une classe n'est jamais prédite (recall = 0 sur une classe présente)
+        present = np.unique(y_vl)
+        recalls = [f1_score(y_vl, preds, labels=[c], average="macro", zero_division=0)
+                   for c in present]
+        min_recall_penalty = 0.1 * (1.0 - min(recalls))
+        scores.append(f1m - min_recall_penalty)
     return float(np.mean(scores))
 
 
@@ -243,13 +304,16 @@ def _lgb_objective(trial, X, y):
 # Walk-forward validation
 # ──────────────────────────────────────────────────────────────────────
 
-def run_walk_forward(df_main, features, cw_dict, results_dir, n_folds=5):
+def run_walk_forward(df_main, features, results_dir, n_folds=5,
+                     max_train_rows=1000, time_weight_halflife=252, time_weighting=False):
     """
-    Walk-forward sur n_folds fenêtres d'expansion croissante.
-    Chaque fold entraîne sur tout ce qui précède et teste sur la fenêtre suivante.
-    Produit walk_forward_metrics.csv avec les métriques par fold.
+    Walk-forward avec fenêtre glissante (rolling window) optionnelle et pondération temporelle.
+
+    - max_train_rows : taille max de la fenêtre de train. Actif uniquement si time_weighting=True.
+    - time_weighting : active la pondération exponentielle et la rolling window (axe 3).
     """
-    print(f"\n🔹 Walk-forward validation ({n_folds} folds)...")
+    mode = f"rolling window={max_train_rows}, halflife={time_weight_halflife}j" if time_weighting else "expanding window"
+    print(f"\n🔹 Walk-forward validation ({n_folds} folds, {mode})...")
     fold_size = len(df_main) // (n_folds + 1)
     fold_results = []
 
@@ -258,7 +322,12 @@ def run_walk_forward(df_main, features, cw_dict, results_dir, n_folds=5):
         test_start  = train_end
         test_end    = test_start + fold_size
 
-        df_tr = df_main.iloc[:train_end]
+        # Rolling window (axe 3) : on garde seulement les max_train_rows dernières lignes
+        if time_weighting:
+            train_start = max(0, train_end - max_train_rows)
+        else:
+            train_start = 0  # expanding window classique
+        df_tr = df_main.iloc[train_start:train_end]
         df_te = df_main.iloc[test_start:test_end]
 
         if len(df_tr) < 100 or len(df_te) < 20:
@@ -266,6 +335,7 @@ def run_walk_forward(df_main, features, cw_dict, results_dir, n_folds=5):
 
         date_min = df_te[DATE_COL].iloc[0].date() if DATE_COL in df_te.columns else "?"
         date_max = df_te[DATE_COL].iloc[-1].date() if DATE_COL in df_te.columns else "?"
+        date_tr_start = df_tr[DATE_COL].iloc[0].date() if DATE_COL in df_tr.columns else "?"
 
         X_tr = df_tr[features]
         y_tr = df_tr["target"].values
@@ -281,23 +351,36 @@ def run_walk_forward(df_main, features, cw_dict, results_dir, n_folds=5):
         fold_cw  = {c: float(w * CLASS_WEIGHT_BOOST.get(c, 1.0))
                     for c, w in zip(present_classes, cw_raw_f)}
 
+        if time_weighting:
+            n = len(X_tr)
+            decay = np.exp(np.log(0.5) / time_weight_halflife * np.arange(n - 1, -1, -1))
+            time_w = decay / decay.sum() * n
+            sample_w = np.array([fold_cw.get(c, 1.0) for c in y_tr]) * time_w
+        else:
+            sample_w = np.array([fold_cw.get(c, 1.0) for c in y_tr])
+
         model = lgb.LGBMClassifier(
             n_estimators=500,
             learning_rate=0.05,
             max_depth=6,
             num_leaves=31,
-            class_weight=fold_cw,
             random_state=SEED,
+            deterministic=True,
+            force_col_wise=True,
+            n_jobs=1,
             verbosity=-1,
         )
         # val interne = derniers 20% du train pour early stopping
         val_cut = int(0.8 * len(X_tr))
         model.fit(
             X_tr.iloc[:val_cut], y_tr[:val_cut],
+            sample_weight=sample_w[:val_cut],
             eval_set=[(X_tr.iloc[val_cut:], y_tr[val_cut:])],
             callbacks=[lgb.early_stopping(30, verbose=False),
                        lgb.log_evaluation(period=-1)],
         )
+        print(f"   Fold {fold+1} train [{date_tr_start} → {df_tr[DATE_COL].iloc[-1].date()}] "
+              f"({len(df_tr)} lignes) → test [{date_min} → {date_max}]")
 
         y_pred = model.predict(X_te)
         acc  = accuracy_score(y_te, y_pred)
@@ -306,8 +389,7 @@ def run_walk_forward(df_main, features, cw_dict, results_dir, n_folds=5):
         r2   = f1_score(y_te, y_pred, labels=[2], average="macro", zero_division=0)  # recall class 2
         r0   = f1_score(y_te, y_pred, labels=[0], average="macro", zero_division=0)  # recall class 0
 
-        print(f"   Fold {fold+1} [{date_min} → {date_max}] "
-              f"BalAcc={bal:.3f} F1m={f1m:.3f} R0={r0:.3f} R2={r2:.3f}")
+        print(f"          BalAcc={bal:.3f} F1m={f1m:.3f} R0={r0:.3f} R2={r2:.3f}")
 
         fold_results.append({
             "fold": fold + 1,
@@ -353,9 +435,21 @@ def run_walk_forward(df_main, features, cw_dict, results_dir, n_folds=5):
 # Main
 # ──────────────────────────────────────────────────────────────────────
 
-def main(feature_selection_on=True, tune=False, walk_forward=False):
+def main(feature_selection_on=True, tune=False, walk_forward=False,
+         lag_features=False, time_weighting=False,
+         run_xgboost=False):
     results_dir = create_results_dir()
     print(f"🔹 Dossier résultats : {results_dir}")
+
+    run_params = {
+        "feature_selection_on": feature_selection_on,
+        "tune": tune,
+        "walk_forward": walk_forward,
+        "lag_features": lag_features,
+        "time_weighting": time_weighting,
+        "run_xgboost": run_xgboost,
+    }
+    save_run_config(results_dir, run_params)
 
     # 1. Chargement données
     print(f"🔹 Chargement : {DATA_FILE_PATH}")
@@ -377,7 +471,22 @@ def main(feature_selection_on=True, tune=False, walk_forward=False):
     df_holdout = create_target(df_holdout, tag="(holdout)")
     print(f"   → Train : {len(df_main)} | Holdout : {len(df_holdout)}")
 
-    # 3. Feature selection
+    # 3. Axe C : lag features ajoutées AVANT SHAP pour que SHAP puisse les évaluer
+    # (uniquement si lag_features=True)
+    if lag_features:
+        print("🔹 Ajout des lag features sur toutes les colonnes (avant sélection SHAP)...")
+        all_raw_feats = [f for f in df_main.columns
+                         if f not in (DATE_COL, "target", "ret_future")]
+        df_full = pd.concat([df_main, df_holdout], axis=0).sort_values(DATE_COL)
+        df_full, _ = add_lag_features(df_full, all_raw_feats)
+        df_main    = df_full[df_full[DATE_COL] < HOLDOUT_START_DATE].copy()
+        df_holdout = df_full[
+            (df_full[DATE_COL] >= HOLDOUT_START_DATE) &
+            (df_full[DATE_COL] <= HOLDOUT_END_DATE)
+        ].copy()
+        print(f"   → {len(df_main)} lignes train, {len(df_holdout)} lignes holdout après lags")
+
+    # 4. Feature selection (SHAP sur le pool complet — inclut les lags si activés)
     if feature_selection_on:
         print("🔹 Sélection SHAP features...")
         raw_feats = select_top_features_shap(df_main, top_n=TOP_N_FEATURES, target_col="ret_future")
@@ -389,7 +498,7 @@ def main(feature_selection_on=True, tune=False, walk_forward=False):
                     if f not in (DATE_COL, "target", "ret_future")]
     print(f"   → {len(features)} features retenues")
 
-    # 4. Split train / val (80/20 chronologique sur df_main)
+    # 5. Split train / val (80/20 chronologique sur df_main)
     split_idx = int(0.8 * len(df_main))
     train_df = df_main.iloc[:split_idx]
     val_df   = df_main.iloc[split_idx:]
@@ -410,17 +519,29 @@ def main(feature_selection_on=True, tune=False, walk_forward=False):
 
     print(f"🔹 Shapes — Train:{X_train.shape} Val:{X_val.shape} Test:{X_test.shape}")
 
-    # 5. Class weights
+    # 5. Class weights + pondération temporelle exponentielle (axe 3)
     present_classes = np.unique(y_train)
     cw_raw = compute_class_weight("balanced", classes=present_classes, y=y_train)
     cw_dict = {c: float(w * CLASS_WEIGHT_BOOST.get(c, 1.0))
                for c, w in zip(present_classes, cw_raw)}
     print(f"🔹 Class weights : {cw_dict}")
 
+    # Pondération temporelle exponentielle (axe 3, optionnel)
+    if time_weighting:
+        halflife = 252
+        n_tr = len(y_train)
+        decay = np.exp(np.log(0.5) / halflife * np.arange(n_tr - 1, -1, -1))
+        time_w = decay / decay.sum() * n_tr
+        sample_weight_train = np.array([cw_dict.get(c, 1.0) for c in y_train]) * time_w
+        print(f"   → Pondération temporelle activée (halflife={halflife}j)")
+    else:
+        sample_weight_train = np.array([cw_dict.get(c, 1.0) for c in y_train])
+
     # 5b. Walk-forward validation
     if walk_forward:
         print("\n🔹 Walk-forward validation...")
-        run_walk_forward(df_main, features, cw_dict, results_dir)
+        run_walk_forward(df_main, features, results_dir,
+                         time_weighting=time_weighting)
 
     # 6. LightGBM
     print("\n🔹 Entraînement LightGBM...")
@@ -436,6 +557,7 @@ def main(feature_selection_on=True, tune=False, walk_forward=False):
         best_params = study.best_params
         best_params.update({"class_weight": cw_dict, "random_state": SEED, "verbosity": -1})
         print(f"   → Meilleurs params : {best_params}")
+        save_run_config(results_dir, run_params, best_lgb_params=study.best_params)
         lgb_model = lgb.LGBMClassifier(**best_params)
     else:
         lgb_model = lgb.LGBMClassifier(
@@ -448,11 +570,15 @@ def main(feature_selection_on=True, tune=False, walk_forward=False):
             colsample_bytree=0.8,
             class_weight=cw_dict,
             random_state=SEED,
+            deterministic=True,
+            force_col_wise=True,
+            n_jobs=1,
             verbosity=-1,
         )
 
     lgb_model.fit(
         X_train, y_train,
+        sample_weight=sample_weight_train,
         eval_set=[(X_val, y_val)],
         callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(period=100)],
     )
@@ -463,67 +589,63 @@ def main(feature_selection_on=True, tune=False, walk_forward=False):
     lgb_f1 = evaluate_and_save("lightgbm", y_test, lgb_pred, lgb_proba,
                                 date_test, results_dir, test_df, XGB_VERSION)
 
-    # 7. XGBoost — use native API to bypass sklearn's label-validation which rejects
-    # non-contiguous label sets (e.g. [0,2] when class 1 is absent from y_train).
-    print("\n🔹 Entraînement XGBoost...")
-    sample_weight      = np.array([cw_dict.get(c, 1.0) for c in y_train])
-    eval_sample_weight = np.array([cw_dict.get(c, 1.0) for c in y_val])
+    # 7. XGBoost (optionnel — désactivé par défaut, run_xgboost=False)
+    xgb_f1 = None
+    if run_xgboost:
+        print("\n🔹 Entraînement XGBoost (référence)...")
+        sample_weight      = sample_weight_train
+        eval_sample_weight = np.array([cw_dict.get(c, 1.0) for c in y_val])
 
-    dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weight)
-    dval   = xgb.DMatrix(X_val,   label=y_val,   weight=eval_sample_weight)
-    dtest  = xgb.DMatrix(X_test)
+        dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weight)
+        dval   = xgb.DMatrix(X_val,   label=y_val,   weight=eval_sample_weight)
+        dtest  = xgb.DMatrix(X_test)
 
-    xgb_params = {
-        "objective":        "multi:softprob",
-        "num_class":        N_CLASSES,
-        "eval_metric":      "mlogloss",
-        "learning_rate":    0.05,
-        "max_depth":        6,
-        "subsample":        0.8,
-        "colsample_bytree": 0.8,
-        "seed":             SEED,
-        "verbosity":        0,
-    }
-    xgb_booster = xgb.train(
-        xgb_params,
-        dtrain,
-        num_boost_round=1000,
-        evals=[(dval, "val")],
-        early_stopping_rounds=50,
-        verbose_eval=100,
-    )
+        xgb_params = {
+            "objective":        "multi:softprob",
+            "num_class":        N_CLASSES,
+            "eval_metric":      "mlogloss",
+            "learning_rate":    0.05,
+            "max_depth":        6,
+            "subsample":        0.8,
+            "colsample_bytree": 0.8,
+            "seed":             SEED,
+            "verbosity":        0,
+        }
+        xgb_booster = xgb.train(
+            xgb_params, dtrain, num_boost_round=1000,
+            evals=[(dval, "val")], early_stopping_rounds=50, verbose_eval=100,
+        )
+        xgb_proba = xgb_booster.predict(dtest).reshape(-1, N_CLASSES)
+        xgb_pred  = xgb_proba.argmax(axis=1)
 
-    xgb_proba = xgb_booster.predict(dtest).reshape(-1, N_CLASSES)
-    xgb_pred  = xgb_proba.argmax(axis=1)
+        scores_imp = xgb_booster.get_score(importance_type="gain")
+        imp = pd.DataFrame([
+            {"feature": f, "importance": scores_imp.get(f, 0.0)} for f in features
+        ]).sort_values("importance", ascending=False)
+        imp.to_csv(os.path.join(results_dir, "xgboost_feature_importance.csv"), index=False)
+        plt.figure(figsize=(10, max(6, len(imp) * 0.3)))
+        plt.barh(imp["feature"][:30][::-1], imp["importance"][:30][::-1])
+        plt.xlabel("Importance (gain)")
+        plt.title("Top features — xgboost")
+        plt.tight_layout()
+        plt.savefig(os.path.join(results_dir, "xgboost_feature_importance.png"), dpi=150)
+        plt.close()
 
-    # feature importance from booster
-    scores = xgb_booster.get_score(importance_type="gain")
-    imp = pd.DataFrame([
-        {"feature": f, "importance": scores.get(f, 0.0)} for f in features
-    ]).sort_values("importance", ascending=False)
-    imp.to_csv(os.path.join(results_dir, "xgboost_feature_importance.csv"), index=False)
-    plt.figure(figsize=(10, max(6, len(imp) * 0.3)))
-    plt.barh(imp["feature"][:30][::-1], imp["importance"][:30][::-1])
-    plt.xlabel("Importance (gain)")
-    plt.title("Top features — xgboost")
-    plt.tight_layout()
-    plt.savefig(os.path.join(results_dir, "xgboost_feature_importance.png"), dpi=150)
-    plt.close()
+        xgb_f1 = evaluate_and_save("xgboost", y_test, xgb_pred, xgb_proba,
+                                    date_test, results_dir, test_df, XGB_VERSION)
+    else:
+        print("\n🔹 XGBoost désactivé (run_xgboost=False)")
 
-    xgb_f1 = evaluate_and_save("xgboost", y_test, xgb_pred, xgb_proba,
-                                date_test, results_dir, test_df, XGB_VERSION)
-
-    # 8. Résumé comparatif
-    print("\n===== COMPARAISON =====")
+    # 8. Résumé
+    print("\n===== RÉSUMÉ =====")
     print(f"   LightGBM F1-Macro : {lgb_f1:.4f}")
-    print(f"   XGBoost  F1-Macro : {xgb_f1:.4f}")
-    print(f"   LSTM     F1-Macro : 0.2800  (référence run 22:19)")
-    winner = "LightGBM" if lgb_f1 >= xgb_f1 else "XGBoost"
-    print(f"   → Meilleur modèle gradient boosting : {winner}")
-    if max(lgb_f1, xgb_f1) > 0.40:
-        print("   ✅ Signal confirmé — le RL ou un Transformer peut être envisagé")
-    elif max(lgb_f1, xgb_f1) > 0.30:
-        print("   ⚠️  Signal faible — améliorer le feature engineering avant le RL")
+    if xgb_f1 is not None:
+        print(f"   XGBoost  F1-Macro : {xgb_f1:.4f}")
+    best_f1 = max(lgb_f1, xgb_f1) if xgb_f1 is not None else lgb_f1
+    if best_f1 > 0.40:
+        print("   ✅ Signal confirmé — RL ou Transformer envisageable")
+    elif best_f1 > 0.30:
+        print("   ⚠️  Signal faible — continuer l'amélioration des features")
     else:
         print("   ❌ Signal absent — revoir la collecte de données")
 
@@ -531,4 +653,5 @@ def main(feature_selection_on=True, tune=False, walk_forward=False):
 
 
 if __name__ == "__main__":
-    main(feature_selection_on=True, tune=True, walk_forward=True)
+    main(feature_selection_on=True, tune=True, walk_forward=True,
+         lag_features=True, time_weighting=False)

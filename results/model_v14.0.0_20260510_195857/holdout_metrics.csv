@@ -1,0 +1,2 @@
+model_version,ecart_min,accuracy,balanced_accuracy,f1_macro,f1_weighted,n_holdout_samples
+14.0.0,0.05,0.2376237623762376,0.3408748114630467,0.13954856577078162,0.10458189844583907,505
