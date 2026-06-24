@@ -22,6 +22,7 @@ from sklearn.utils.class_weight import compute_class_weight
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.isotonic import IsotonicRegression
 from sklearn.metrics import (
     classification_report, confusion_matrix,
     accuracy_score, f1_score, balanced_accuracy_score,
@@ -116,18 +117,21 @@ def create_target(df, tag=""):
 def add_lag_features(df, features, lags=(1, 5, 21)):
     """
     Ajoute des features décalées (lag) pour capturer la dynamique temporelle.
-    Équivalent léger de la mémoire LSTM, sans la complexité d'architecture.
+    Utilise pd.concat pour éviter la fragmentation du DataFrame.
     Retourne le df enrichi et la liste des colonnes features mise à jour.
     """
     df = df.copy()
+    lag_frames = []
     new_cols = []
     for feat in features:
         if feat not in df.columns:
             continue
         for lag in lags:
             col_name = f"{feat}_lag{lag}"
-            df[col_name] = df[feat].shift(lag)
+            lag_frames.append(df[feat].shift(lag).rename(col_name))
             new_cols.append(col_name)
+    if lag_frames:
+        df = pd.concat([df] + lag_frames, axis=1)
     df.dropna(subset=new_cols, inplace=True)
     return df, features + new_cols
 
@@ -202,12 +206,31 @@ def calibrate_and_threshold(model, X_cal, y_cal, X_test, thresholds=None):
     Calibre les probabilités (isotonic regression sur X_cal/y_cal),
     puis applique des seuils asymétriques par classe.
 
+    Fonctionne avec les modèles sklearn natifs (LightGBM) via CalibratedClassifierCV,
+    et avec les wrappers custom (XGBoost) via calibration isotonic manuelle par classe.
+
     thresholds : dict {classe: seuil_min} ou None (argmax classique).
     Retourne (proba_calibrée, y_pred_final).
     """
-    cal_model = CalibratedClassifierCV(model, method="isotonic", cv="prefit")
-    cal_model.fit(X_cal, y_cal)
-    proba_cal = pad_proba(cal_model.predict_proba(X_test), cal_model.classes_)
+    # Récupère les probas brutes sur le set de calibration et de test
+    raw_cal  = model.predict_proba(X_cal)
+    raw_test = model.predict_proba(X_test)
+    if hasattr(model, "classes_"):
+        raw_cal  = pad_proba(raw_cal,  model.classes_)
+        raw_test = pad_proba(raw_test, model.classes_)
+
+    # Calibration isotonic indépendante par classe (one-vs-rest)
+    proba_cal = np.zeros_like(raw_test)
+    for c in range(N_CLASSES):
+        y_bin = (y_cal == c).astype(int)
+        iso = IsotonicRegression(out_of_bounds="clip")
+        iso.fit(raw_cal[:, c], y_bin)
+        proba_cal[:, c] = iso.predict(raw_test[:, c])
+
+    # Renormalise pour que les probas somment à 1
+    row_sums = proba_cal.sum(axis=1, keepdims=True)
+    row_sums = np.where(row_sums == 0, 1, row_sums)
+    proba_cal = proba_cal / row_sums
 
     if thresholds is None:
         return proba_cal, proba_cal.argmax(axis=1)
@@ -648,31 +671,93 @@ def main(feature_selection_on=True, tune=False, walk_forward=False,
     # 7. XGBoost (optionnel — désactivé par défaut, run_xgboost=False)
     xgb_f1 = None
     if run_xgboost:
-        print("\n🔹 Entraînement XGBoost (référence)...")
-        sample_weight      = sample_weight_train
         eval_sample_weight = np.array([cw_dict.get(c, 1.0) for c in y_val])
 
-        dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weight)
+        if tune:
+            print("\n🔹 XGBoost — Optuna tuning...")
+
+            def _xgb_objective(trial):
+                params = {
+                    "objective":        "multi:softprob",
+                    "num_class":        N_CLASSES,
+                    "eval_metric":      "mlogloss",
+                    "learning_rate":    trial.suggest_float("learning_rate", 0.02, 0.2, log=True),
+                    "max_depth":        trial.suggest_int("max_depth", 4, 9),
+                    "subsample":        trial.suggest_float("subsample", 0.5, 1.0),
+                    "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+                    "min_child_weight": trial.suggest_int("min_child_weight", 1, 20),
+                    "reg_alpha":        trial.suggest_float("reg_alpha", 1e-4, 5.0, log=True),
+                    "reg_lambda":       trial.suggest_float("reg_lambda", 1e-4, 5.0, log=True),
+                    "seed":             SEED,
+                    "verbosity":        0,
+                }
+                n_rounds = trial.suggest_int("n_estimators", 300, 1500)
+                tscv = TimeSeriesSplit(n_splits=3)
+                scores = []
+                for tr_idx, vl_idx in tscv.split(X_train):
+                    X_tr, X_vl = X_train.iloc[tr_idx], X_train.iloc[vl_idx]
+                    y_tr, y_vl = y_train[tr_idx], y_train[vl_idx]
+                    fold_cw = np.array([cw_dict.get(c, 1.0) for c in y_tr])
+                    d_tr = xgb.DMatrix(X_tr, label=y_tr, weight=fold_cw)
+                    d_vl = xgb.DMatrix(X_vl, label=y_vl)
+                    bst  = xgb.train(params, d_tr, num_boost_round=n_rounds,
+                                     evals=[(d_vl, "val")], early_stopping_rounds=30,
+                                     verbose_eval=False)
+                    proba_vl = bst.predict(d_vl).reshape(-1, N_CLASSES)
+                    preds_vl = proba_vl.argmax(axis=1)
+                    f1m = f1_score(y_vl, preds_vl, average="macro", zero_division=0)
+                    present = np.unique(y_vl)
+                    recalls = [f1_score(y_vl, preds_vl, labels=[c], average="macro", zero_division=0)
+                               for c in present]
+                    scores.append(f1m - 0.1 * (1.0 - min(recalls)))
+                return float(np.mean(scores))
+
+            xgb_study = optuna.create_study(direction="maximize",
+                                            sampler=optuna.samplers.TPESampler(seed=SEED))
+            xgb_study.optimize(_xgb_objective, n_trials=N_TRIALS)
+            best_xgb = xgb_study.best_params
+            n_rounds  = best_xgb.pop("n_estimators", 1000)
+            print(f"   -> Meilleurs params XGBoost : {best_xgb}  rounds={n_rounds}")
+            best_xgb.update({"objective": "multi:softprob", "num_class": N_CLASSES,
+                              "eval_metric": "mlogloss", "seed": SEED, "verbosity": 0})
+        else:
+            print("\n🔹 Entraînement XGBoost (params fixes)...")
+            best_xgb = {
+                "objective": "multi:softprob", "num_class": N_CLASSES,
+                "eval_metric": "mlogloss", "learning_rate": 0.05,
+                "max_depth": 6, "subsample": 0.8, "colsample_bytree": 0.8,
+                "seed": SEED, "verbosity": 0,
+            }
+            n_rounds = 1000
+
+        dtrain = xgb.DMatrix(X_train, label=y_train, weight=sample_weight_train)
         dval   = xgb.DMatrix(X_val,   label=y_val,   weight=eval_sample_weight)
         dtest  = xgb.DMatrix(X_test)
 
-        xgb_params = {
-            "objective":        "multi:softprob",
-            "num_class":        N_CLASSES,
-            "eval_metric":      "mlogloss",
-            "learning_rate":    0.05,
-            "max_depth":        6,
-            "subsample":        0.8,
-            "colsample_bytree": 0.8,
-            "seed":             SEED,
-            "verbosity":        0,
-        }
         xgb_booster = xgb.train(
-            xgb_params, dtrain, num_boost_round=1000,
-            evals=[(dval, "val")], early_stopping_rounds=50, verbose_eval=100,
+            best_xgb, dtrain, num_boost_round=n_rounds,
+            evals=[(dval, "val")], early_stopping_rounds=50, verbose_eval=False,
         )
         xgb_proba = xgb_booster.predict(dtest).reshape(-1, N_CLASSES)
         xgb_pred  = xgb_proba.argmax(axis=1)
+
+        # Calibration isotonic + seuils asymétriques (même traitement que LightGBM)
+        class _XGBWrapper:
+            """Wrapper minimal pour rendre xgb.Booster compatible avec calibrate_and_threshold."""
+            def __init__(self, booster):
+                self.booster_ = booster
+                self.classes_ = np.arange(N_CLASSES)
+            def predict_proba(self, X):
+                return self.booster_.predict(xgb.DMatrix(X)).reshape(-1, N_CLASSES)
+            def predict(self, X):
+                return self.predict_proba(X).argmax(axis=1)
+
+        print("🔹 Calibration isotonic XGBoost...")
+        xgb_wrapper = _XGBWrapper(xgb_booster)
+        thresholds = DECISION_THRESHOLDS if hasattr(DECISION_THRESHOLDS, "__getitem__") else None
+        xgb_proba_cal, xgb_pred_cal = calibrate_and_threshold(
+            xgb_wrapper, X_val, y_val, X_test, thresholds=thresholds
+        )
 
         scores_imp = xgb_booster.get_score(importance_type="gain")
         imp = pd.DataFrame([
@@ -688,7 +773,8 @@ def main(feature_selection_on=True, tune=False, walk_forward=False,
         plt.close()
 
         xgb_f1 = evaluate_and_save("xgboost", y_test, xgb_pred, xgb_proba,
-                                    date_test, results_dir, test_df, XGB_VERSION)
+                                    date_test, results_dir, test_df, XGB_VERSION,
+                                    y_pred_cal=xgb_pred_cal, proba_cal=xgb_proba_cal)
     else:
         print("\n🔹 XGBoost désactivé (run_xgboost=False)")
 
@@ -710,4 +796,4 @@ def main(feature_selection_on=True, tune=False, walk_forward=False,
 
 if __name__ == "__main__":
     main(feature_selection_on=True, tune=True, walk_forward=True,
-         lag_features=True, time_weighting=True, run_xgboost=False)
+         lag_features=True, time_weighting=True, run_xgboost=True)
